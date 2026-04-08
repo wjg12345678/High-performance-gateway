@@ -1,4 +1,4 @@
-# TinyWebServer
+# WebServer
 
 基于 C++ 的 Linux Web 服务器项目，重点覆盖了 Reactor 并发模型、HTTP/1.1 请求处理、静态文件传输、线程池、连接池、日志系统、配置化运行、守护进程和 HTTPS。
 
@@ -621,6 +621,16 @@ curl -X POST http://127.0.0.1:9006/api/echo \
 
 - HTTP/1.1 `Keep-Alive`
 - 基于最小堆的连接超时管理
+
+当前实现中，每个 `SubReactor` 都维护一个独立的最小堆定时器：
+
+- 新连接注册后加入最小堆
+- 每次读写成功后刷新该连接的过期时间
+- 连接关闭时从堆中删除
+- `epoll_wait()` 的超时时间直接由堆顶节点决定
+- 事件循环结束后扫描堆顶，批量关闭已经超时的连接
+
+这套实现对应代码主要位于 `timer/heap_timer.*` 与 `webserver.cpp` 中的 `SubReactor::refresh_timer()`、`SubReactor::scan_timeout()`。
 
 收益主要体现在：
 

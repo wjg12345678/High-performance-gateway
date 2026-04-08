@@ -14,14 +14,14 @@
 #include <sys/eventfd.h>
 #include <pthread.h>
 #include <vector>
-#include <queue>
 #include <deque>
-#include <map>
 #include <signal.h>
 #include <openssl/ssl.h>
 
 #include "./threadpool/threadpool.h"
 #include "./http/http_conn.h"
+#include "./timer/lst_timer.h"
+#include "./timer/heap_timer.h"
 
 const int MAX_FD = 65536;           //最大文件描述符
 const int MAX_EVENT_NUMBER = 10000; //最大事件数
@@ -68,21 +68,6 @@ public:
         bool dispatch(int connfd);
 
     private:
-        struct TimerNode
-        {
-            time_t expire;
-            int sockfd;
-            unsigned long long version;
-        };
-
-        struct TimerCompare
-        {
-            bool operator()(const TimerNode &lhs, const TimerNode &rhs) const
-            {
-                return lhs.expire > rhs.expire;
-            }
-        };
-
         static void *worker(void *arg);
         void run();
         void register_connection(int connfd);
@@ -101,9 +86,7 @@ public:
         bool m_stop;
         locker m_pending_lock;
         std::deque<int> m_pending_connections;
-        unsigned long long m_timer_sequence;
-        std::priority_queue<TimerNode, std::vector<TimerNode>, TimerCompare> m_timer_heap;
-        std::map<int, unsigned long long> m_timer_versions;
+        HeapTimer m_timer_heap;
     };
 
 public:

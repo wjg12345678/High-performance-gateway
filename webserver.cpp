@@ -13,7 +13,7 @@ int set_nonblocking(int fd)
 }
 }
 
-WebServer::SubReactor::SubReactor() : m_server(NULL), m_index(0), m_epollfd(-1), m_notifyfd(-1), m_tid(0), m_stop(false), m_timer_sequence(0)
+WebServer::SubReactor::SubReactor() : m_server(NULL), m_index(0), m_epollfd(-1), m_notifyfd(-1), m_tid(0), m_stop(false)
 {
 }
 
@@ -246,78 +246,39 @@ void WebServer::SubReactor::handle_notify()
 
 void WebServer::SubReactor::scan_timeout()
 {
-    time_t cur = time(NULL);
-    while (!m_timer_heap.empty())
-    {
-        const TimerNode &node = m_timer_heap.top();
-        if (node.expire > cur)
-        {
-            break;
-        }
-
-        int sockfd = node.sockfd;
-        unsigned long long version = node.version;
-        m_timer_heap.pop();
-
-        std::map<int, unsigned long long>::iterator it = m_timer_versions.find(sockfd);
-        if (it == m_timer_versions.end() || it->second != version)
-        {
-            continue;
-        }
-
+    m_timer_heap.tick([this](int sockfd) {
         if (!m_server->users[sockfd].is_open())
         {
-            m_timer_versions.erase(it);
-            continue;
+            return;
         }
 
-        if (cur - m_server->users[sockfd].last_active() < m_server->m_conn_timeout)
+        if (time(NULL) - m_server->users[sockfd].last_active() < m_server->m_conn_timeout)
         {
-            refresh_timer(sockfd);
-            continue;
+            m_timer_heap.add_or_update(sockfd, m_server->m_conn_timeout);
+            return;
         }
 
         m_server->users[sockfd].close_conn();
-        m_timer_versions.erase(it);
-    }
+    });
 }
 
 void WebServer::SubReactor::refresh_timer(int sockfd)
 {
-    TimerNode node;
-    node.expire = time(NULL) + m_server->m_conn_timeout;
-    node.sockfd = sockfd;
-    node.version = ++m_timer_sequence;
-    m_timer_versions[sockfd] = node.version;
-    m_timer_heap.push(node);
+    if (!m_server->users[sockfd].is_open())
+    {
+        return;
+    }
+    m_timer_heap.add_or_update(sockfd, m_server->m_conn_timeout);
 }
 
 int WebServer::SubReactor::next_wait_timeout_ms()
 {
-    time_t cur = time(NULL);
-    while (!m_timer_heap.empty())
-    {
-        const TimerNode &node = m_timer_heap.top();
-        std::map<int, unsigned long long>::iterator it = m_timer_versions.find(node.sockfd);
-        if (it == m_timer_versions.end() || it->second != node.version || !m_server->users[node.sockfd].is_open())
-        {
-            m_timer_heap.pop();
-            continue;
-        }
-
-        if (node.expire <= cur)
-        {
-            return 0;
-        }
-        return (int)((node.expire - cur) * 1000);
-    }
-
-    return -1;
+    return m_timer_heap.get_next_timeout_ms();
 }
 
 void WebServer::SubReactor::remove_connection(int sockfd)
 {
-    m_timer_versions.erase(sockfd);
+    m_timer_heap.remove(sockfd);
 }
 
 WebServer::WebServer() : m_epollfd(-1), m_listenfd(-1), m_pool(NULL), m_https_enable(0), m_ssl_ctx(NULL), m_sub_reactor_num(1), m_next_sub_reactor(0)
