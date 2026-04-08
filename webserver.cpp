@@ -561,7 +561,10 @@ void WebServer::dealwithread(int sockfd)
     if (users[sockfd].read_once())
     {
         LOG_INFO("deal with the client(%s)", inet_ntoa(users[sockfd].get_address()->sin_addr));
-        m_pool->append_p(users + sockfd);
+        if (!m_pool->append_p(users + sockfd))
+        {
+            users[sockfd].close_conn();
+        }
         return;
     }
 

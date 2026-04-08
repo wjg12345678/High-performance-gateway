@@ -156,7 +156,6 @@ void http_conn::close_conn(bool real_close)
 {
     if (real_close && (m_sockfd != -1))
     {
-        printf("close %d\n", m_sockfd);
         close_file();
         if (m_ssl != NULL)
         {
@@ -1196,7 +1195,6 @@ http_conn::HTTP_CODE http_conn::process_read()
     {
         text = get_line();
         m_start_line = m_checked_idx;
-        LOG_INFO("%s", text);
         switch (m_check_state)
         {
         case CHECK_STATE_REQUESTLINE:
@@ -1693,8 +1691,14 @@ bool http_conn::write()
                 }
                 if (file_written == 0)
                 {
-                    close_file();
-                    return false;
+                    if (bytes_to_send <= 0 || m_file_offset >= m_file_stat.st_size)
+                    {
+                        bytes_to_send = 0;
+                        continue;
+                    }
+                    modfd(m_epollfd, m_sockfd, EPOLLOUT, m_TRIGMode);
+                    refresh_active();
+                    return true;
                 }
 
                 bytes_have_send += file_written;
@@ -1743,9 +1747,6 @@ bool http_conn::add_response(const char *format, ...)
     {
         m_write_buf[m_write_ring.size] = '\0';
     }
-
-    LOG_INFO("request:%s", temp_buf);
-
     return true;
 }
 bool http_conn::add_status_line(int status, const char *title)
