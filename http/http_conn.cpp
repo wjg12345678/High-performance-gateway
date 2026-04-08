@@ -23,7 +23,7 @@ locker m_lock;
 map<string, string> users;
 SSL_CTX *http_conn::m_ssl_ctx = NULL;
 bool http_conn::m_tls_enabled = false;
-string http_conn::m_auth_token = "tinywebserver-secret";
+string http_conn::m_auth_token;
 
 namespace
 {
@@ -45,7 +45,9 @@ const RouteEntry g_routes[] = {
     {http_conn::POST, "/api/echo", &http_conn::route_api_echo},
     {http_conn::GET, "/api/private/ping", &http_conn::route_api_private_ping},
     {http_conn::POST, "/2", &http_conn::route_page_login},
+    {http_conn::POST, "/2CGISQL.cgi", &http_conn::route_page_login},
     {http_conn::POST, "/3", &http_conn::route_page_register},
+    {http_conn::POST, "/3CGISQL.cgi", &http_conn::route_page_register},
     {http_conn::GET, "/0", &http_conn::route_register_page},
     {http_conn::GET, "/1", &http_conn::route_login_page},
     {http_conn::GET, "/5", &http_conn::route_picture_page},
@@ -1531,14 +1533,15 @@ http_conn::HTTP_CODE http_conn::handle_auth_request(bool is_register, bool api_m
     bool success = false;
     if (is_register)
     {
-        MemoryPoolBuffer sql_insert_buffer;
-        char *sql_insert = sql_insert_buffer.get();
-        strcpy(sql_insert, "INSERT INTO user(username, passwd) VALUES(");
-        strcat(sql_insert, "'");
-        strcat(sql_insert, name.c_str());
-        strcat(sql_insert, "', '");
-        strcat(sql_insert, password.c_str());
-        strcat(sql_insert, "')");
+        char escaped_name[201];
+        char escaped_password[201];
+        mysql_real_escape_string(mysql, escaped_name, name.c_str(), name.length());
+        mysql_real_escape_string(mysql, escaped_password, password.c_str(), password.length());
+
+        char sql_insert[512];
+        snprintf(sql_insert, sizeof(sql_insert),
+                 "INSERT INTO user(username, passwd) VALUES('%s', '%s')",
+                 escaped_name, escaped_password);
 
         if (users.find(name) == users.end())
         {

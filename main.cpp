@@ -264,6 +264,9 @@ int run_server_process(const Config &config)
     string passwd = getenv_or_default("TWS_DB_PASSWORD", config.db_password.c_str());
     string databasename = getenv_or_default("TWS_DB_NAME", config.db_name.c_str());
 
+    //鉴权配置，环境变量优先覆盖配置文件
+    string auth_token = getenv_or_default("TWS_AUTH_TOKEN", config.auth_token.c_str());
+
     WebServer server;
 
     //初始化
@@ -274,7 +277,7 @@ int run_server_process(const Config &config)
                 config.close_log, config.actor_model, config.log_level,
                 config.log_split_lines, config.log_queue_size,
                 config.https_enable, config.https_cert_file, config.https_key_file,
-                config.auth_token);
+                auth_token);
 
     //日志
     server.log_write();

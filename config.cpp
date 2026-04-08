@@ -57,12 +57,12 @@ Config::Config(){
     https_enable = 0;
     https_cert_file = "./certs/server.crt";
     https_key_file = "./certs/server.key";
-    auth_token = "tinywebserver-secret";
+    auth_token = "";
 
     db_host = "127.0.0.1";
     db_port = 3306;
     db_user = "root";
-    db_password = "root";
+    db_password = "";
     db_name = "qgydb";
 
     conn_timeout = 15;

@@ -86,7 +86,170 @@
 ├── webserver.cpp
 └── webserver.h
 ```
-
+                                                                                                                                                                                                        
+  ┌─────────────────────────────────────────────────────────────────┐                                                                                                                                     
+  │                         启动阶段                                 │                                                                                                                                    
+  │                                                                 │                                                                                                                                     
+  │  main()                                                         │                                                                                                                                     
+  │    ├─ Config::parse_arg()     解析命令行 -f conf -p port ...     │                                                                                                                                    
+  │    │    └─ load_file()        读取 server.conf                  │                                                                                                                                     
+  │    │                                                            │                                                                                                                                     
+  │    ├─ daemon_mode?                                              │                                                                                                                                     
+  │    │   ├─ Yes → run_daemon_supervisor()  守护进程 + 自动重启     │                                                                                                                                  
+  │    │   │         └─ fork() → run_server_process()               │                                                                                                                                     
+  │    │   └─ No  → run_server_process()     前台运行               │                                                                                                                                     
+  │    │                                                            │                                                                                                                                     
+  │    └─ run_server_process()                                      │                                                                                                                                     
+  │         ├─ 环境变量覆盖 TWS_DB_*, TWS_AUTH_TOKEN                 │                                                                                                                                    
+  │         ├─ WebServer::init()       保存所有配置参数               │                                                                                                                                   
+  │         ├─ server.log_write()      初始化日志(同步/异步)          │                                                                                                                                   
+  │         ├─ server.tls_init()       加载SSL证书(可选)             │                                                                                                                                    
+  │         ├─ server.sql_pool()       创建数据库连接池               │                                                                                                                                   
+  │         │    └─ initmysql_result() 预加载user表到内存map          │                                                                                                                                   
+  │         ├─ server.thread_pool()    创建线程池(动态伸缩)           │                                                                                                                                   
+  │         ├─ server.trig_mode()      设置ET/LT触发模式             │                                                                                                                                    
+  │         ├─ server.eventListen()    创建监听socket + epoll        │                                                                                                                                    
+  │         │    └─ init_sub_reactors()  启动N个子Reactor线程         │                                                                                                                                   
+  │         └─ server.eventLoop()      进入主事件循环 ───────────┐   │                                                                                                                                    
+  └─────────────────────────────────────────────────────────────│───┘                                                                                                                                   
+                                                                │                                                                                                                                         
+  ┌─────────────────────────────────────────────────────────────▼───┐                                                                                                                                   
+  │                      连接接入阶段                                │                                                                                                                                    
+  │                                                                 │                                                                                                                                   
+  │  主Reactor (eventLoop)                                          │                                                                                                                                     
+  │    └─ epoll_wait() 只监听 listenfd                              │                                                                                                                                     
+  │         └─ dealclientdata()                                     │                                                                                                                                     
+  │              ├─ accept() 接受新连接                              │                                                                                                                                    
+  │              ├─ 轮询选择子Reactor (round-robin)                  │                                                                                                                                    
+  │              └─ SubReactor::dispatch(connfd)                    │                                                                                                                                     
+  │                   └─ 写eventfd唤醒子Reactor                     │                                                                                                                                     
+  │                                                                 │                                                                                                                                     
+  │  子Reactor线程 (SubReactor::run)                                │                                                                                                                                     
+  │    └─ handle_notify()                                           │                                                                                                                                     
+  │         └─ register_connection()                                │                                                                                                                                     
+  │              ├─ http_conn::init()  初始化连接对象                 │
+  │              │    └─ SSL_new() (如果HTTPS)                      │                                                                                                                                     
+  │              ├─ 注册到子Reactor的epoll                           │                                                                                                                                    
+  │              └─ refresh_timer() 加入超时堆                      │                                                                                                                                     
+  └─────────────────────────────────────────────────────────────────┘                                                                                                                                     
+                                │                                                                                                                                                                         
+                     ┌──────────▼──────────┐                                                                                                                                                              
+                     │   子Reactor epoll    │                                                                                                                                                           
+                     │   检测到 EPOLLIN     │                                                                                                                                                             
+                     └──────────┬──────────┘
+                                │                                                                                                                                                                         
+  ┌─────────────────────────────▼───────────────────────────────────┐                                                                                                                                   
+  │                      请求处理阶段                                │                                                                                                                                    
+  │                                                                 │                                                                                                                                   
+  │  dealwithread(sockfd)                                           │                                                                                                                                     
+  │    ├─ TLS握手 (如需要): SSL_accept()                            │
+  │    ├─ read_once()                                               │                                                                                                                                     
+  │    │    ├─ ring_recv() ← recv() / SSL_read()                   │                                                                                                                                      
+  │    │    └─ sync_read_buffer() → 数据进入 m_read_buf             │                                                                                                                                     
+  │    └─ threadpool::append_p()  提交到线程池                      │                                                                                                                                     
+  │                                                                 │                                                                                                                                     
+  │  线程池工作线程                                                  │                                                                                                                                    
+  │    └─ http_conn::process()                                      │                                                                                                                                     
+  │         │                                                       │                                                                                                                                   
+  │         ├─ process_read() ── HTTP解析状态机 ──┐                  │                                                                                                                                    
+  │         │   ├─ parse_request_line()           │                  │                                                                                                                                    
+  │         │   │    提取 METHOD, URL, VERSION     │                  │
+  │         │   ├─ parse_headers()                │                  │                                                                                                                                    
+  │         │   │    提取 Host, Content-Length,    │                  │                                                                                                                                   
+  │         │   │    Content-Type, Authorization   │                  │                                                                                                                                   
+  │         │   └─ parse_content()                │                  │                                                                                                                                    
+  │         │        读取请求体                    │                  │                                                                                                                                 
+  │         │                                     ▼                  │                                                                                                                                    
+  │         │                              do_request()              │                                                                                                                                  
+  │         │                                     │                  │                                                                                                                                    
+  │         │              ┌──────────────────────┤                  │                                                                                                                                  
+  │         │              ▼                      ▼                  │                                                                                                                                    
+  │         │     run_before_middlewares()   parse_post_body()       │
+  │         │       ├─ middleware_request_log()  解析表单/JSON        │                                                                                                                                   
+  │         │       └─ middleware_auth()                             │                                                                                                                                    
+  │         │            Bearer Token校验                            │                                                                                                                                    
+  │         │              │                                        │                                                                                                                                     
+  │         │              ▼                                        │                                                                                                                                     
+  │         │        route_request() ── 路由匹配 ──┐                 │                                                                                                                                    
+  │         │         │                            │                 │                                                                                                                                    
+  │         │    ┌────┴────┐              ┌────────┴───────┐        │
+  │         │    │ API路由  │              │   静态文件路由   │        │                                                                                                                                  
+  │         │    │ 精确匹配 │              │  handle_static  │        │                                                                                                                                   
+  │         │    │ g_routes │              │    _route()     │        │                                                                                                                                   
+  │         │    └────┬────┘              └────────┬───────┘        │                                                                                                                                     
+  │         │         │                            │                 │                                                                                                                                    
+  │         │   ┌─────┴──────┐          resolve_static_path()       │                                                                                                                                   
+  │         │   │ 登录/注册   │          open_static_file()          │                                                                                                                                    
+  │         │   │ handle_auth │          open() + stat()             │                                                                                                                                    
+  │         │   │ _request()  │                   │                  │
+  │         │   │ ↓           │                   │                  │                                                                                                                                    
+  │         │   │ mysql_query  │                   │                  │                                                                                                                                   
+  │         │   │ (转义防注入) │                   │                  │                                                                                                                                   
+  │         │   └─────┬──────┘                    │                 │                                                                                                                                     
+  │         │         │                            │                 │                                                                                                                                  
+  │         │         ▼                            ▼                 │                                                                                                                                    
+  │         │     run_after_middlewares()                            │
+  │         │       API结果 → JSON格式化                             │                                                                                                                                    
+  │         │              │                                        │                                                                                                                                     
+  │         │              ▼                                        │
+  │         ├─ process_write(HTTP_CODE) ── 生成响应 ──┐              │                                                                                                                                    
+  │         │   ├─ add_status_line()   "HTTP/1.1 200 OK\r\n"       │                                                                                                                                      
+  │         │   ├─ add_headers()       Content-Length, Type...      │                                                                                                                                     
+  │         │   ├─ add_content()       响应体(错误页/JSON)           │                                                                                                                                    
+  │         │   └─ 写入 m_write_ring 缓冲区                         │                                                                                                                                     
+  │         │                                                       │                                                                                                                                     
+  │         └─ 注册 EPOLLOUT → 等待可写事件                          │                                                                                                                                    
+  └─────────────────────────────────────────────────────────────────┘                                                                                                                                     
+                                │                                                                                                                                                                       
+                     ┌──────────▼──────────┐                                                                                                                                                              
+                     │   子Reactor epoll    │                                                                                                                                                           
+                     │   检测到 EPOLLOUT    │
+                     └──────────┬──────────┘                                                                                                                                                              
+                                │
+  ┌─────────────────────────────▼───────────────────────────────────┐                                                                                                                                     
+  │                      响应发送阶段                                │                                                                                                                                  
+  │                                                                 │                                                                                                                                     
+  │  dealwithwrite(sockfd) → http_conn::write()                     │
+  │    ├─ ring_send() 发送响应头                                     │                                                                                                                                    
+  │    │    └─ send() / SSL_write()                                 │                                                                                                                                   
+  │    ├─ 发送文件体                                                 │                                                                                                                                    
+  │    │    ├─ HTTP:  sendfile() 零拷贝                              │                                                                                                                                  
+  │    │    └─ HTTPS: read() + SSL_write()                          │                                                                                                                                     
+  │    └─ 完成后:                                                    │                                                                                                                                    
+  │         ├─ Keep-Alive → init() 重置状态, 注册EPOLLIN等待下个请求  │                                                                                                                                   
+  │         └─ Close → close_conn() 关闭连接                        │                                                                                                                                     
+  └─────────────────────────────────────────────────────────────────┘                                                                                                                                     
+                                                                                                                                                                                                          
+  ┌─────────────────────────────────────────────────────────────────┐                                                                                                                                     
+  │                      辅助模块                                    │                                                                                                                                  
+  │                                                                 │                                                                                                                                     
+  │  超时管理 (子Reactor内)                                          │
+  │    ├─ 最小堆管理连接超时 (默认15秒)                               │                                                                                                                                   
+  │    ├─ 每次I/O后 refresh_timer() 刷新                             │                                                                                                                                    
+  │    └─ scan_timeout() 清理过期连接                                │                                                                                                                                    
+  │                                                                 │                                                                                                                                     
+  │  线程池 (动态伸缩)                                               │                                                                                                                                    
+  │    ├─ 核心线程: 8个, 常驻等待                                     │                                                                                                                                   
+  │    ├─ 最大线程: 16个, 按需扩展                                    │                                                                                                                                   
+  │    └─ 空闲线程: 超时30秒后自动回收                                │                                                                                                                                   
+  │                                                                 │                                                                                                                                     
+  │  数据库连接池                                                    │                                                                                                                                  
+  │    ├─ RAII自动获取/归还连接                                      │                                                                                                                                    
+  │    ├─ 空闲超时60秒自动ping保活                                    │                                                                                                                                   
+  │    └─ 启动时预加载user表到内存                                    │                                                                                                                                   
+  │                                                                 │                                                                                                                                     
+  │  日志系统                                                        │                                                                                                                                    
+  │    ├─ 同步/异步模式可选                                          │                                                                                                                                    
+  │    ├─ 按日期+行数自动切割                                        │                                                                                                                                  
+  │    └─ 级别过滤: DEBUG < INFO < WARN < ERROR                     │                                                                                                                                     
+  └─────────────────────────────────────────────────────────────────┘                                                                                                                                     
+                                                                                                                                                                                                          
+  核心架构特点                                                                                                                                                                                            
+                                                                                                                                                                                                        
+  - 主从 Reactor 模式：主 Reactor 只负责 accept，N 个子 Reactor 各自管理一组连接的 I/O 和超时                                                                                                             
+  - Proactor/Reactor 可切换：Proactor 模式下主线程完成 I/O，线程池只做业务处理；Reactor 模式下线程池也负责 I/O                                                                                          
+  - 零拷贝：HTTP 模式下用 sendfile() 直接从文件发送到 socket；HTTPS 则需经过 SSL 加密中转                                                                                                                 
+  - 连接复用：HTTP/1.1 Keep-Alive 支持，处理完一个请求后重置状态继续等待下一个            
 ## 编译环境
 
 - Linux
