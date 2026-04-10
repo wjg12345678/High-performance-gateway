@@ -780,6 +780,7 @@ scripts/run_smoke_suite.sh
 ## 文档索引
 
 - 架构图：[docs/architecture.md](docs/architecture.md)
+- 静态架构总览图：[docs/architecture-overview.svg](docs/architecture-overview.svg)
 - 请求时序图：[docs/request-sequence.md](docs/request-sequence.md)
 - 文件业务说明：[docs/file-module.md](docs/file-module.md)
 - 压测报告：[docs/benchmark.md](docs/benchmark.md)

@@ -1,0 +1,102 @@
+<svg width="1600" height="960" viewBox="0 0 1600 960" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="120" y1="100" x2="1480" y2="860" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F7EEE3"/>
+      <stop offset="0.5" stop-color="#F2E3D0"/>
+      <stop offset="1" stop-color="#EAD6BE"/>
+    </linearGradient>
+    <linearGradient id="panel" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#FFF9F1"/>
+      <stop offset="1" stop-color="#F7ECDD"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#A14E32"/>
+      <stop offset="1" stop-color="#7B351E"/>
+    </linearGradient>
+    <filter id="shadow" x="0" y="0" width="1600" height="960" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feFlood flood-opacity="0" result="BackgroundImageFix"/>
+      <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+      <feOffset dy="14"/>
+      <feGaussianBlur stdDeviation="18"/>
+      <feColorMatrix type="matrix" values="0 0 0 0 0.35 0 0 0 0 0.23 0 0 0 0 0.13 0 0 0 0.16 0"/>
+      <feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_1_1"/>
+      <feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_1_1" result="shape"/>
+    </filter>
+    <marker id="arrow" markerWidth="14" markerHeight="14" refX="11" refY="7" orient="auto">
+      <path d="M0 0L14 7L0 14V0Z" fill="#9C7350"/>
+    </marker>
+  </defs>
+
+  <rect width="1600" height="960" rx="36" fill="url(#bg)"/>
+
+  <text x="92" y="102" fill="#2D231A" font-family="Georgia, 'Songti SC', serif" font-size="42" font-weight="700">Atlas WebServer 架构总览</text>
+  <text x="93" y="142" fill="#7B6554" font-family="Georgia, 'Songti SC', serif" font-size="22">Main-Reactor + Multi-SubReactor + Dynamic Thread Pool + MySQL + File Service</text>
+
+  <g filter="url(#shadow)">
+    <rect x="78" y="190" width="250" height="124" rx="26" fill="url(#panel)"/>
+    <rect x="78.75" y="190.75" width="248.5" height="122.5" rx="25.25" stroke="#D1B190"/>
+    <text x="126" y="235" fill="#9A4D31" font-family="Georgia, 'Songti SC', serif" font-size="18" letter-spacing="2">CLIENTS</text>
+    <text x="117" y="274" fill="#2D231A" font-family="Georgia, 'Songti SC', serif" font-size="30" font-weight="700">Browser / curl / wrk</text>
+    <text x="117" y="301" fill="#7C6552" font-family="Georgia, 'Songti SC', serif" font-size="18">HTTP / HTTPS 请求入口</text>
+
+    <rect x="398" y="190" width="290" height="124" rx="26" fill="url(#panel)"/>
+    <rect x="398.75" y="190.75" width="288.5" height="122.5" rx="25.25" stroke="#D1B190"/>
+    <text x="466" y="235" fill="#9A4D31" font-family="Georgia, 'Songti SC', serif" font-size="18" letter-spacing="2">MAIN REACTOR</text>
+    <text x="452" y="274" fill="#2D231A" font-family="Georgia, 'Songti SC', serif" font-size="30" font-weight="700">listenfd + accept</text>
+    <text x="434" y="301" fill="#7C6552" font-family="Georgia, 'Songti SC', serif" font-size="18">主线程只负责监听和连接分发</text>
+
+    <rect x="766" y="120" width="296" height="132" rx="26" fill="url(#panel)"/>
+    <rect x="766.75" y="120.75" width="294.5" height="130.5" rx="25.25" stroke="#D1B190"/>
+    <text x="840" y="165" fill="#9A4D31" font-family="Georgia, 'Songti SC', serif" font-size="18" letter-spacing="2">SUB REACTOR A</text>
+    <text x="812" y="204" fill="#2D231A" font-family="Georgia, 'Songti SC', serif" font-size="28" font-weight="700">conn epoll + timer heap</text>
+    <text x="815" y="229" fill="#7C6552" font-family="Georgia, 'Songti SC', serif" font-size="18">维护连接读写事件与超时</text>
+
+    <rect x="766" y="278" width="296" height="132" rx="26" fill="url(#panel)"/>
+    <rect x="766.75" y="278.75" width="294.5" height="130.5" rx="25.25" stroke="#D1B190"/>
+    <text x="838" y="323" fill="#9A4D31" font-family="Georgia, 'Songti SC', serif" font-size="18" letter-spacing="2">SUB REACTOR N</text>
+    <text x="812" y="362" fill="#2D231A" font-family="Georgia, 'Songti SC', serif" font-size="28" font-weight="700">EPOLLIN / EPOLLOUT</text>
+    <text x="822" y="387" fill="#7C6552" font-family="Georgia, 'Songti SC', serif" font-size="18">轮询分摊连接处理压力</text>
+
+    <rect x="1136" y="190" width="326" height="124" rx="26" fill="url(#accent)"/>
+    <text x="1188" y="235" fill="#F2D9C7" font-family="Georgia, 'Songti SC', serif" font-size="18" letter-spacing="2">DYNAMIC THREAD POOL</text>
+    <text x="1183" y="274" fill="#FFF9F2" font-family="Georgia, 'Songti SC', serif" font-size="30" font-weight="700">worker threads</text>
+    <text x="1171" y="301" fill="#F3E7DB" font-family="Georgia, 'Songti SC', serif" font-size="18">业务逻辑执行，支持扩容与空闲回收</text>
+
+    <rect x="302" y="470" width="994" height="180" rx="30" fill="url(#panel)"/>
+    <rect x="302.75" y="470.75" width="992.5" height="178.5" rx="29.25" stroke="#D1B190"/>
+    <text x="338" y="515" fill="#9A4D31" font-family="Georgia, 'Songti SC', serif" font-size="18" letter-spacing="2">HTTP REQUEST PIPELINE</text>
+    <text x="338" y="558" fill="#2D231A" font-family="Georgia, 'Songti SC', serif" font-size="34" font-weight="700">parser → auth → route → file-service → response</text>
+    <text x="338" y="595" fill="#7C6552" font-family="Georgia, 'Songti SC', serif" font-size="22">`http_conn` 负责编排，拆分为 parser / io / runtime / response / auth / file-service / utils 多模块</text>
+
+    <rect x="244" y="744" width="286" height="122" rx="26" fill="url(#panel)"/>
+    <rect x="244.75" y="744.75" width="284.5" height="120.5" rx="25.25" stroke="#D1B190"/>
+    <text x="310" y="789" fill="#9A4D31" font-family="Georgia, 'Songti SC', serif" font-size="18" letter-spacing="2">MYSQL</text>
+    <text x="294" y="828" fill="#2D231A" font-family="Georgia, 'Songti SC', serif" font-size="28" font-weight="700">user / sessions / files</text>
+    <text x="286" y="853" fill="#7C6552" font-family="Georgia, 'Songti SC', serif" font-size="18">用户、会话、文件元数据、审计</text>
+
+    <rect x="654" y="744" width="286" height="122" rx="26" fill="url(#panel)"/>
+    <rect x="654.75" y="744.75" width="284.5" height="120.5" rx="25.25" stroke="#D1B190"/>
+    <text x="726" y="789" fill="#9A4D31" font-family="Georgia, 'Songti SC', serif" font-size="18" letter-spacing="2">FILE STORAGE</text>
+    <text x="713" y="828" fill="#2D231A" font-family="Georgia, 'Songti SC', serif" font-size="28" font-weight="700">root/uploads</text>
+    <text x="689" y="853" fill="#7C6552" font-family="Georgia, 'Songti SC', serif" font-size="18">小文件落盘，下载直接回传</text>
+
+    <rect x="1064" y="744" width="286" height="122" rx="26" fill="url(#panel)"/>
+    <rect x="1064.75" y="744.75" width="284.5" height="120.5" rx="25.25" stroke="#D1B190"/>
+    <text x="1140" y="789" fill="#9A4D31" font-family="Georgia, 'Songti SC', serif" font-size="18" letter-spacing="2">OPS</text>
+    <text x="1111" y="828" fill="#2D231A" font-family="Georgia, 'Songti SC', serif" font-size="28" font-weight="700">log / config / smoke test</text>
+    <text x="1113" y="853" fill="#7C6552" font-family="Georgia, 'Songti SC', serif" font-size="18">日志、配置、部署和验证能力</text>
+  </g>
+
+  <path d="M328 252H380" stroke="#9C7350" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
+  <path d="M688 252H748" stroke="#9C7350" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
+  <path d="M688 252H720C742 252 742 186 766 186" stroke="#9C7350" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
+  <path d="M1062 186H1118" stroke="#9C7350" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
+  <path d="M1062 344H1118" stroke="#9C7350" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
+  <path d="M1298 314V390C1298 430 1120 430 1120 470" stroke="#9C7350" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
+  <path d="M914 410V450" stroke="#9C7350" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
+  <path d="M799 650V722" stroke="#9C7350" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
+  <path d="M610 650V700C610 730 432 730 432 744" stroke="#9C7350" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
+  <path d="M1010 650V700C1010 730 1208 730 1208 744" stroke="#9C7350" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
+
+  <text x="92" y="922" fill="#7A6453" font-family="Georgia, 'Songti SC', serif" font-size="18">适用于 README、面试投屏、项目答辩的静态架构总览图</text>
+</svg>

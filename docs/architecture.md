@@ -2,6 +2,10 @@
 
 这份文档用于面试和 README 展示，重点说明服务启动、Reactor 协作、线程池执行、数据库与文件模块的关系。
 
+静态 SVG 版本：
+
+![Architecture Overview](architecture-overview.svg)
+
 ## 整体架构
 
 ```mermaid
