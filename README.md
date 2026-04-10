@@ -450,7 +450,7 @@ flowchart LR
 ### 1. Docker Compose 启动
 
 ```bash
-docker compose up --build
+docker compose up -d --build
 ```
 
 启动后默认服务：
@@ -477,12 +477,27 @@ curl http://127.0.0.1:9006/healthz
 
 ```bash
 make server
-./server -f server.conf
+./server
 ```
 
 ### 4. 配置项
 
-项目默认配置文件是 [server.conf](server.conf)。
+项目默认会自动读取 [server.conf](server.conf)，不再要求显式传 `-f server.conf`。
+
+配置优先级：
+
+1. 代码默认值
+2. `server.conf`
+3. 环境变量
+4. 命令行参数
+
+推荐做法：
+
+- 本地开发：直接维护 `server.conf`
+- Docker / 部署环境：使用环境变量覆盖敏感项
+- 临时调试：只对少量参数使用命令行覆盖
+
+环境变量模板见 [.env.example](.env.example)。
 
 常用配置如下：
 
@@ -502,12 +517,26 @@ conn_timeout=15
 actor_model=0
 daemon_mode=0
 https_enable=0
-auth_token=tinywebserver-secret
+auth_token=
 db_host=127.0.0.1
 db_port=3306
 db_user=root
-db_password=root
+db_password=
 db_name=qgydb
+```
+
+常用环境变量如下：
+
+```bash
+TWS_PORT=9006
+TWS_DB_HOST=127.0.0.1
+TWS_DB_PORT=3306
+TWS_DB_USER=root
+TWS_DB_PASSWORD=your-password
+TWS_DB_NAME=qgydb
+TWS_AUTH_TOKEN=your-secret-token
+TWS_THREAD_NUM=8
+TWS_SQL_NUM=8
 ```
 
 ### 5. 守护进程与控制脚本

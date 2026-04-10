@@ -1,4 +1,5 @@
 #include "config.h"
+#include <cstdlib>
 #include <fstream>
 #include <sstream>
 
@@ -13,6 +14,18 @@ string trim(const string &input)
     }
     size_t end = input.find_last_not_of(" \t\r\n");
     return input.substr(start, end - start + 1);
+}
+
+const char *getenv_value(const char *name)
+{
+    const char *value = getenv(name);
+    return (value != NULL && value[0] != '\0') ? value : NULL;
+}
+
+int getenv_int_value(const char *name, int fallback)
+{
+    const char *value = getenv_value(name);
+    return value ? atoi(value) : fallback;
 }
 }
 
@@ -53,7 +66,7 @@ Config::Config(){
 
     //守护进程模式，默认前台运行
     daemon_mode = 0;
-    pid_file = "./TinyWebServer.pid";
+    pid_file = "./atlas-webserver.pid";
     https_enable = 0;
     https_cert_file = "./certs/server.crt";
     https_key_file = "./certs/server.key";
@@ -69,6 +82,12 @@ Config::Config(){
     threadpool_max_threads = 16;
     threadpool_idle_timeout = 30;
     mysql_idle_timeout = 60;
+    m_config_file_path = "server.conf";
+}
+
+void Config::load_default_file()
+{
+    load_file(m_config_file_path.c_str());
 }
 
 void Config::load_file(const char *path)
@@ -83,6 +102,7 @@ void Config::load_file(const char *path)
     {
         return;
     }
+    m_config_file_path = path;
 
     string line;
     while (getline(file, line))
@@ -129,6 +149,46 @@ void Config::load_file(const char *path)
         else if (key == "threadpool_idle_timeout") threadpool_idle_timeout = atoi(value.c_str());
         else if (key == "mysql_idle_timeout") mysql_idle_timeout = atoi(value.c_str());
     }
+}
+
+void Config::apply_env_overrides()
+{
+    PORT = getenv_int_value("TWS_PORT", PORT);
+    LOGWrite = getenv_int_value("TWS_LOG_WRITE", LOGWrite);
+    log_level = getenv_int_value("TWS_LOG_LEVEL", log_level);
+    log_split_lines = getenv_int_value("TWS_LOG_SPLIT_LINES", log_split_lines);
+    log_queue_size = getenv_int_value("TWS_LOG_QUEUE_SIZE", log_queue_size);
+    TRIGMode = getenv_int_value("TWS_TRIG_MODE", TRIGMode);
+    OPT_LINGER = getenv_int_value("TWS_OPT_LINGER", OPT_LINGER);
+    sql_num = getenv_int_value("TWS_SQL_NUM", sql_num);
+    thread_num = getenv_int_value("TWS_THREAD_NUM", thread_num);
+    close_log = getenv_int_value("TWS_CLOSE_LOG", close_log);
+    actor_model = getenv_int_value("TWS_ACTOR_MODEL", actor_model);
+    daemon_mode = getenv_int_value("TWS_DAEMON_MODE", daemon_mode);
+    https_enable = getenv_int_value("TWS_HTTPS_ENABLE", https_enable);
+    db_port = getenv_int_value("TWS_DB_PORT", db_port);
+    conn_timeout = getenv_int_value("TWS_CONN_TIMEOUT", conn_timeout);
+    threadpool_max_threads = getenv_int_value("TWS_THREADPOOL_MAX_THREADS", threadpool_max_threads);
+    threadpool_idle_timeout = getenv_int_value("TWS_THREADPOOL_IDLE_TIMEOUT", threadpool_idle_timeout);
+    mysql_idle_timeout = getenv_int_value("TWS_MYSQL_IDLE_TIMEOUT", mysql_idle_timeout);
+
+    const char *value = NULL;
+    value = getenv_value("TWS_PID_FILE");
+    if (value) pid_file = value;
+    value = getenv_value("TWS_HTTPS_CERT_FILE");
+    if (value) https_cert_file = value;
+    value = getenv_value("TWS_HTTPS_KEY_FILE");
+    if (value) https_key_file = value;
+    value = getenv_value("TWS_AUTH_TOKEN");
+    if (value) auth_token = value;
+    value = getenv_value("TWS_DB_HOST");
+    if (value) db_host = value;
+    value = getenv_value("TWS_DB_USER");
+    if (value) db_user = value;
+    value = getenv_value("TWS_DB_PASSWORD");
+    if (value) db_password = value;
+    value = getenv_value("TWS_DB_NAME");
+    if (value) db_name = value;
 }
 
 void Config::parse_arg(int argc, char*argv[]){
@@ -192,4 +252,9 @@ void Config::parse_arg(int argc, char*argv[]){
             break;
         }
     }
+}
+
+const string &Config::config_file_path() const
+{
+    return m_config_file_path;
 }

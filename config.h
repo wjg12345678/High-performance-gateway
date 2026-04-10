@@ -11,8 +11,11 @@ public:
     Config();
     ~Config(){};
 
+    void load_default_file();
     void load_file(const char *path);
+    void apply_env_overrides();
     void parse_arg(int argc, char*argv[]);
+    const string &config_file_path() const;
 
     //端口号
     int PORT;
@@ -73,6 +76,9 @@ public:
     int threadpool_max_threads;
     int threadpool_idle_timeout;
     int mysql_idle_timeout;
+
+private:
+    string m_config_file_path;
 };
 
 #endif

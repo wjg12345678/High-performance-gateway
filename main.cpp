@@ -25,18 +25,6 @@ const int DAEMON_RESTART_WINDOW_SECONDS = 60;
 const int DAEMON_RESTART_DELAY_SECONDS = 2;
 const int EXIT_CODE_RELOAD = 3;
 
-string getenv_or_default(const char *name, const char *fallback)
-{
-    const char *value = getenv(name);
-    return value ? value : fallback;
-}
-
-int getenv_int_or_default(const char *name, int fallback)
-{
-    const char *value = getenv(name);
-    return value ? atoi(value) : fallback;
-}
-
 bool process_exists(pid_t pid)
 {
     if (pid <= 0)
@@ -257,27 +245,17 @@ int run_server_process(const Config &config)
     g_worker_exit_signal = 0;
     install_worker_signal_handlers();
 
-    //数据库配置，环境变量优先覆盖配置文件
-    string db_host = getenv_or_default("TWS_DB_HOST", config.db_host.c_str());
-    int db_port = getenv_int_or_default("TWS_DB_PORT", config.db_port);
-    string user = getenv_or_default("TWS_DB_USER", config.db_user.c_str());
-    string passwd = getenv_or_default("TWS_DB_PASSWORD", config.db_password.c_str());
-    string databasename = getenv_or_default("TWS_DB_NAME", config.db_name.c_str());
-
-    //鉴权配置，环境变量优先覆盖配置文件
-    string auth_token = getenv_or_default("TWS_AUTH_TOKEN", config.auth_token.c_str());
-
     WebServer server;
 
     //初始化
-    server.init(config.PORT, user, passwd, databasename, db_host, db_port, config.LOGWrite,
+    server.init(config.PORT, config.db_user, config.db_password, config.db_name, config.db_host, config.db_port, config.LOGWrite,
                 config.OPT_LINGER, config.TRIGMode, config.sql_num, config.thread_num,
                 config.threadpool_max_threads, config.threadpool_idle_timeout,
                 config.mysql_idle_timeout, config.conn_timeout,
                 config.close_log, config.actor_model, config.log_level,
                 config.log_split_lines, config.log_queue_size,
                 config.https_enable, config.https_cert_file, config.https_key_file,
-                auth_token);
+                config.auth_token);
 
     //日志
     server.log_write();
@@ -436,9 +414,11 @@ int run_daemon_supervisor(const Config &config)
 
 int main(int argc, char *argv[])
 {
-    //命令行解析
     Config config;
+    config.load_default_file();
+    config.apply_env_overrides();
     config.parse_arg(argc, argv);
+    config.apply_env_overrides();
 
     if (config.daemon_mode)
     {
