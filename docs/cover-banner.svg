@@ -1,0 +1,91 @@
+<svg width="1600" height="900" viewBox="0 0 1600 900" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="160" y1="120" x2="1430" y2="790" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F6EBDD"/>
+      <stop offset="0.48" stop-color="#F3E0C9"/>
+      <stop offset="1" stop-color="#E9D2B8"/>
+    </linearGradient>
+    <radialGradient id="glowLeft" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(260 220) rotate(30) scale(360 260)">
+      <stop stop-color="#B85E3A" stop-opacity="0.28"/>
+      <stop offset="1" stop-color="#B85E3A" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowRight" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(1260 700) rotate(-18) scale(400 280)">
+      <stop stop-color="#2F6E59" stop-opacity="0.24"/>
+      <stop offset="1" stop-color="#2F6E59" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="panel" x1="280" y1="170" x2="1280" y2="760" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFF9F1" stop-opacity="0.96"/>
+      <stop offset="1" stop-color="#F7EBD9" stop-opacity="0.9"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#A14E32"/>
+      <stop offset="1" stop-color="#7A351E"/>
+    </linearGradient>
+    <filter id="shadow" x="213" y="119" width="1174" height="658" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feFlood flood-opacity="0" result="BackgroundImageFix"/>
+      <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+      <feOffset dy="18"/>
+      <feGaussianBlur stdDeviation="28"/>
+      <feColorMatrix type="matrix" values="0 0 0 0 0.36 0 0 0 0 0.22 0 0 0 0 0.11 0 0 0 0.18 0"/>
+      <feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_1_2"/>
+      <feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_1_2" result="shape"/>
+    </filter>
+  </defs>
+
+  <rect width="1600" height="900" rx="40" fill="url(#bg)"/>
+  <rect width="1600" height="900" rx="40" fill="url(#glowLeft)"/>
+  <rect width="1600" height="900" rx="40" fill="url(#glowRight)"/>
+
+  <g opacity="0.28" stroke="#B48864" stroke-width="1.2">
+    <path d="M120 175H1480"/>
+    <path d="M120 735H1480"/>
+    <path d="M200 95V805"/>
+    <path d="M1400 95V805"/>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="269" y="157" width="1062" height="546" rx="32" fill="url(#panel)"/>
+    <rect x="269.75" y="157.75" width="1060.5" height="544.5" rx="31.25" stroke="#CFAF90" stroke-opacity="0.8" stroke-width="1.5"/>
+  </g>
+
+  <rect x="323" y="215" width="232" height="38" rx="19" fill="#F2E1CF"/>
+  <text x="355" y="239" fill="#8A6A54" font-family="Georgia, 'Songti SC', serif" font-size="16" letter-spacing="4">ATLAS WEBSERVER</text>
+
+  <text x="322" y="344" fill="#2C231A" font-family="Georgia, 'Songti SC', serif" font-size="76" font-weight="700">高并发 C++</text>
+  <text x="322" y="424" fill="#2C231A" font-family="Georgia, 'Songti SC', serif" font-size="76" font-weight="700">工程化 Web 服务</text>
+
+  <text x="324" y="492" fill="#78624F" font-family="Georgia, 'Songti SC', serif" font-size="28">Main-Reactor + Multi-SubReactor + Dynamic Thread Pool + MySQL</text>
+  <text x="324" y="536" fill="#78624F" font-family="Georgia, 'Songti SC', serif" font-size="28">用户系统 · 鉴权 · 小文件上传下载 · 操作审计 · Docker Compose · Smoke Test</text>
+
+  <rect x="323" y="588" width="258" height="58" rx="29" fill="url(#accent)"/>
+  <text x="378" y="625" fill="#FFF8F1" font-family="Georgia, 'Songti SC', serif" font-size="24" font-weight="700">Showcase Ready</text>
+
+  <g opacity="0.95">
+    <rect x="910" y="232" width="300" height="150" rx="24" fill="#FBF3E8" stroke="#D3B390" stroke-width="1.5"/>
+    <text x="944" y="272" fill="#955032" font-family="Georgia, 'Songti SC', serif" font-size="18" letter-spacing="2">REQUEST FLOW</text>
+    <circle cx="960" cy="319" r="11" fill="#A14E32"/>
+    <circle cx="1060" cy="319" r="11" fill="#2F6E59"/>
+    <circle cx="1160" cy="319" r="11" fill="#A47A5B"/>
+    <path d="M975 319H1045" stroke="#B78D68" stroke-width="3" stroke-linecap="round"/>
+    <path d="M1075 319H1145" stroke="#B78D68" stroke-width="3" stroke-linecap="round"/>
+    <text x="930" y="353" fill="#5F4C3D" font-family="Georgia, 'Songti SC', serif" font-size="20">Client</text>
+    <text x="1014" y="353" fill="#5F4C3D" font-family="Georgia, 'Songti SC', serif" font-size="20">Reactor</text>
+    <text x="1135" y="353" fill="#5F4C3D" font-family="Georgia, 'Songti SC', serif" font-size="20">Worker</text>
+  </g>
+
+  <g opacity="0.95">
+    <rect x="872" y="418" width="378" height="208" rx="28" fill="#2A2927"/>
+    <rect x="901" y="454" width="320" height="30" rx="10" fill="#3B3B38"/>
+    <rect x="901" y="503" width="190" height="16" rx="8" fill="#C58B69"/>
+    <rect x="901" y="532" width="260" height="16" rx="8" fill="#4C886F"/>
+    <rect x="901" y="561" width="238" height="16" rx="8" fill="#A18A76"/>
+    <rect x="901" y="594" width="156" height="14" rx="7" fill="#E7D7C4"/>
+    <text x="914" y="475" fill="#F4E7D8" font-family="'Courier New', monospace" font-size="16">docker compose up -d --build</text>
+    <text x="903" y="439" fill="#E6D7C4" font-family="Georgia, 'Songti SC', serif" font-size="18" letter-spacing="2">DEPLOYMENT SNAPSHOT</text>
+  </g>
+
+  <g opacity="0.8">
+    <path d="M790 232C844 274 867 305 907 365" stroke="#B98B67" stroke-width="3" stroke-dasharray="8 12" stroke-linecap="round"/>
+    <path d="M780 590C832 574 866 550 914 522" stroke="#B98B67" stroke-width="3" stroke-dasharray="8 12" stroke-linecap="round"/>
+  </g>
+</svg>

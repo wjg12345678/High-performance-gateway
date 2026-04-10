@@ -1,8 +1,39 @@
 # Atlas WebServer
 
+![Atlas WebServer Cover](docs/cover-banner.svg)
+
+![C++](https://img.shields.io/badge/C%2B%2B-11%2F17-blue)
+![Platform](https://img.shields.io/badge/Platform-Linux%20%2B%20Docker-0f766e)
+![Protocol](https://img.shields.io/badge/Protocol-HTTP%2F1.1%20%2B%20HTTPS-b45309)
+![Database](https://img.shields.io/badge/Database-MySQL%208-2563eb)
+![Status](https://img.shields.io/badge/Status-Showcase%20Ready-15803d)
+
 一个基于 C++ / Linux / `epoll` 的工程化 Web 服务项目。
 
 这是一个独立设计并实现的 C++ Web 服务项目，重点补齐了 `Main-Reactor + Multi-SubReactor`、线程池、连接池、超时治理、TLS、文件业务模块、鉴权、操作审计、Docker Compose、压测材料和成体系的 smoke test，适合作为秋招服务端 / C++ 后端 / Linux 网络编程项目展示。
+
+## 仓库速览
+
+- 项目定位：面向秋招展示的 C++ 服务端工程项目，不是只停留在教学 Demo 层面的网络程序
+- 技术关键词：`epoll`、Reactor、非阻塞 IO、线程池、MySQL 连接池、TLS、Docker Compose、`wrk`
+- 业务闭环：注册登录、Token 鉴权、小文件上传下载、权限控制、操作日志
+- 工程闭环：文档、压测、Smoke Test、部署脚本、可直接运行的前端演示页
+
+## 快速导航
+
+- 在线入口说明：[部署与运行](#部署与运行)
+- 架构设计：[整体架构](#整体架构)
+- 文件业务：[文件业务模块](#文件业务模块)
+- 压测结果：[压测结果](#压测结果)
+- 文档汇总：[文档索引](#文档索引)
+- 发布说明：[RELEASE_NOTES.md](RELEASE_NOTES.md)
+
+## 亮点摘要
+
+- 将早期臃肿的 HTTP 连接处理逻辑拆分为 `parser / io / response / runtime / auth / file-service / utils` 七类职责模块
+- 基于 `Main-Reactor + Multi-SubReactor + Dynamic Thread Pool` 构建并发处理模型，并补充连接超时治理
+- 引入 MySQL 会话持久化、文件元数据管理、操作审计，项目从“网络框架”升级为“有真实业务的服务”
+- 增加 Docker Compose、健康检查、Smoke Test、压测图表和结构化文档，形成完整展示闭环
 
 ---
 
@@ -761,6 +792,10 @@ scripts/run_smoke_suite.sh
 
 基于 C++ / Linux / `epoll` 独立实现工程化 Web 服务，采用 `Main-Reactor + Multi-SubReactor` 架构，补齐 TLS、动态线程池、MySQL 连接池、超时治理、用户文件中心、操作审计、Docker 部署与压测验证。
 
+### 中文简介版本
+
+Atlas WebServer 是一个我独立设计并持续重构的 C++ 服务端项目。项目基于 Linux `epoll` 和 Reactor 模型实现高并发 Web 服务，并在网络通信能力之外，进一步补齐了用户系统、Token 鉴权、小文件上传下载、权限控制、操作日志、Docker Compose 部署、Smoke Test 和 `wrk` 压测材料，用于展示我在 Linux 网络编程、服务端架构设计和工程化落地方面的完整能力。
+
 ### 项目描述版本
 
 - 基于 `epoll`、非阻塞 socket 和 Reactor 模型独立实现 Linux 高并发 Web 服务，支持 HTTP/1.1、Keep-Alive、静态资源和基础 API
@@ -777,6 +812,14 @@ scripts/run_smoke_suite.sh
 3. 文件业务闭环是怎么接入现有 HTTP 框架的
 4. 为什么要重构 `http_conn.cpp`，最后怎么按职责拆分
 5. 如何验证重构后没有回归：smoke test + 压测材料
+
+### 面试亮点提纲
+
+- 可以重点讲“为什么从单体 HTTP 处理类拆到多模块”，这能体现你对可维护性和边界设计的理解
+- 可以重点讲 Reactor、线程池、连接池、定时器之间的协作路径，而不是只背定义
+- 可以重点讲文件业务接入后的变化：项目从静态资源服务升级成了有真实权限和数据流转的业务系统
+- 可以重点讲压测和验证材料，说明你不仅写了代码，还验证了吞吐、延迟和错误情况
+- 可以重点讲配置、部署、日志、健康检查这些工程细节，这些往往比“写了多少算法”更像真实后端项目
 
 ---
 
