@@ -88,7 +88,7 @@
 - 使用最小堆定时器回收超时连接
 - Docker Compose 可直接拉起 `web + mysql`
 - 具备分层 smoke test：`auth`、`private-api`、`files`
-- 提供压测数据表、QPS/P99/错误数图、架构图和时序图
+- 提供分层压测矩阵、原始 `wrk` 输出、性能对比结论、架构图和时序图
 
 ---
 
@@ -711,30 +711,58 @@ scripts/run_smoke_suite.sh
 - 服务运行方式：`docker compose up -d`
 - 工具：`wrk`
 - 压测时长：`10s`
-- 目标接口：`/healthz`、`/api/private/ping`、`/api/private/files`
+- 线程数：`4`
+- HTTPS：关闭
+- 目标接口：`/healthz`、`/`、`/api/login`、`/api/private/ping`、`/api/private/files`
+- 发布配置：`TWS_LOG_WRITE=0`
 
-### 结果表
+说明：
 
-| 接口 | 并发 | 平均延迟 | Requests/sec | P99 | Socket errors |
-| --- | --- | --- | ---: | --- | --- |
-| `/healthz` | 200 | 29.09ms | 7601.75 | 83.77ms | 无 |
-| `/healthz` | 500 | 91.75ms | 5779.42 | 371.61ms | read 527, timeout 5 |
-| `/api/private/ping` | 200 | 68.74ms | 3153.38 | 304.58ms | read 32 |
-| `/api/private/files` | 200 | 36.31ms | 6024.66 | 92.37ms | timeout 15 |
-| `/api/private/files` | 500 | 102.38ms | 5579.91 | 864.80ms | read 241, timeout 45 |
+- 当前机器上，同步日志模式比默认异步日志模式表现更好，因此这里展示的是当前仓库在这台机器上的“最佳可复现配置”。
+- 完整矩阵和原始 `wrk` 输出见 [docs/benchmark.md](docs/benchmark.md)。
+
+### 核心矩阵
+
+#### 轻接口与静态资源
+
+| 接口 | 并发 | Avg | P90 | P99 | Requests/sec | Socket errors |
+| --- | ---: | --- | --- | --- | ---: | --- |
+| `/healthz` | 100 | 30.97ms | 24.90ms | 710.15ms | 6898.92 | connect 0, read 0, write 0, timeout 4 |
+| `/healthz` | 500 | 101.19ms | 139.49ms | 915.19ms | 4476.61 | connect 0, read 4059, write 8, timeout 214 |
+| `/healthz` | 1000 | 132.18ms | 157.00ms | 425.25ms | 7581.63 | connect 0, read 3577, write 0, timeout 6 |
+| `/` | 100 | 26.04ms | 30.56ms | 209.02ms | 5165.27 | 无 |
+| `/` | 500 | 112.57ms | 147.78ms | 815.33ms | 4851.51 | connect 0, read 586, write 0, timeout 40 |
+| `/` | 1000 | 149.16ms | 192.63ms | 313.45ms | 6610.76 | connect 0, read 3218, write 0, timeout 17 |
+
+#### 鉴权与文件查询
+
+| 接口 | 并发 | Avg | P90 | P99 | Requests/sec | Socket errors |
+| --- | ---: | --- | --- | --- | ---: | --- |
+| `/api/private/ping` | 100 | 15.70ms | 23.92ms | 60.52ms | 6654.09 | 无 |
+| `/api/private/ping` | 500 | 59.62ms | 74.79ms | 596.27ms | 5077.29 | connect 0, read 8476, write 1345, timeout 292 |
+| `/api/private/ping` | 1000 | 133.55ms | 173.25ms | 364.37ms | 7497.74 | connect 0, read 3489, write 0, timeout 1 |
+| `/api/private/files` | 100 | 55.96ms | 84.00ms | 573.09ms | 2196.76 | connect 0, read 0, write 0, timeout 3 |
+| `/api/private/files` | 500 | 214.94ms | 293.53ms | 597.87ms | 2173.21 | connect 0, read 731, write 0, timeout 60 |
+| `/api/private/files` | 1000 | 285.23ms | 410.50ms | 930.34ms | 3127.67 | connect 0, read 3145, write 40, timeout 179 |
+
+#### 重业务写路径
+
+| 接口 | 并发 | Avg | P90 | P99 | Requests/sec | Socket errors |
+| --- | ---: | --- | --- | --- | ---: | --- |
+| `/api/login` | 100 | 117.69ms | 159.00ms | 295.95ms | 875.10 | 无 |
+| `/api/login` | 500 | 1.08s | 1.43s | 1.84s | 426.50 | connect 0, read 337, write 2, timeout 31 |
+| `/api/private/files` `POST` | 100 | 300.48ms | 382.70ms | 697.62ms | 330.92 | 无 |
+| `/api/private/files` `POST` | 500 | 1.41s | 1.65s | 1.84s | 320.38 | connect 0, read 586, write 0, timeout 74 |
 
 ### 结果解读
 
-- `/healthz` 可以作为基础吞吐上限参考，200 并发约 `7.6k req/s`
-- `/api/private/ping` 展示了鉴权和 session 查询带来的真实业务开销
-- `/api/private/files` 在 200 并发时吞吐表现不错，但 500 并发后 P99 尾延迟明显恶化
-- 当前版本已经能展示“功能可用 + 有真实压测材料”，这比单纯报一个 QPS 数字更适合面试
+- `/healthz`、首页静态页和 `/api/private/ping` 在这套配置下都能跑到 `5k~7.5k req/s` 量级，说明连接接入、静态资源和轻量鉴权路径都具备不错的吞吐能力。
+- `/api/private/files` 明显更受 MySQL 影响，在 `500~1000` 并发区间已经持续出现 `read/timeout` 错误，说明数据库查询和返回 JSON 已经成为主要热点。
+- `POST /api/login` 和 `POST /api/private/files` 是当前最重的两条写路径，尤其上传接口在 `500` 并发下进入秒级延迟区，后续优化优先级应高于继续拉高轻接口 QPS。
+- 额外做了同步/异步日志对比：在这台机器上 `TWS_LOG_WRITE=0` 明显优于默认异步日志模式，因此发布数据采用同步日志配置。
 
-### 图表
+### 文档与原始数据
 
-- QPS 图：[docs/benchmark-qps.svg](docs/benchmark-qps.svg)
-- P99 图：[docs/benchmark-p99.svg](docs/benchmark-p99.svg)
-- 错误数图：[docs/benchmark-errors.svg](docs/benchmark-errors.svg)
 - 原始数据：[docs/benchmark.csv](docs/benchmark.csv)
 - 详细报告：[docs/benchmark.md](docs/benchmark.md)
 

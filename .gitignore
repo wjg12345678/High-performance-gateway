@@ -21,3 +21,6 @@ docker/mysql/*.sql.tmp
 .DS_Store
 
 TinyWebServer.pid
+
+reports/
+root/uploads/*wrk-demo.txt

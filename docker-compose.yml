@@ -34,6 +34,10 @@ services:
       TWS_DB_USER: root
       TWS_DB_PASSWORD: root
       TWS_DB_NAME: qgydb
+      TWS_LOG_WRITE: ${TWS_LOG_WRITE:-1}
+      TWS_THREAD_NUM: ${TWS_THREAD_NUM:-8}
+      TWS_SQL_NUM: ${TWS_SQL_NUM:-8}
+      TWS_CONN_TIMEOUT: ${TWS_CONN_TIMEOUT:-15}
     volumes:
       - ./root/uploads:/app/root/uploads
     ports:
