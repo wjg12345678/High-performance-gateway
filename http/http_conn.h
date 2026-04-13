@@ -244,6 +244,7 @@ private:
     HTTP_CODE handle_file_download(const char *path);
     HTTP_CODE handle_file_delete(const char *path);
     HTTP_CODE handle_operation_list();
+    HTTP_CODE handle_operation_delete(const char *path);
     bool open_managed_file(const string &path, const string &content_type, const string &download_name);
     bool parse_managed_upload_payload(ManagedUploadPayload &payload, int &status, const char *&title, string &message);
     string build_file_list_json(MYSQL_RES *result) const;

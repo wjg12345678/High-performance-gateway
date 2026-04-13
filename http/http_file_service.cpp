@@ -422,6 +422,40 @@ http_conn::HTTP_CODE http_conn::handle_operation_list()
     return MEMORY_REQUEST;
 }
 
+http_conn::HTTP_CODE http_conn::handle_operation_delete(const char *path)
+{
+    HTTP_CODE auth_code = require_user_session("operation delete requires user session");
+    if (auth_code != NO_REQUEST)
+    {
+        return auth_code;
+    }
+
+    char *endptr = NULL;
+    long operation_id = strtol(path, &endptr, 10);
+    if (endptr == path || *endptr != '\0')
+    {
+        return BAD_REQUEST;
+    }
+
+    char sql[512];
+    snprintf(sql, sizeof(sql),
+             "DELETE FROM operation_logs WHERE id=%ld AND username='%s'",
+             operation_id,
+             escape_sql_value(m_current_user).c_str());
+    if (mysql_query(mysql, sql) != 0)
+    {
+        return INTERNAL_ERROR;
+    }
+
+    if (mysql_affected_rows(mysql) == 0)
+    {
+        return respond_json_error(404, "Not Found", "operation log not found");
+    }
+
+    set_memory_response(200, "OK", "{\"code\":0,\"message\":\"delete success\"}", "application/json");
+    return MEMORY_REQUEST;
+}
+
 bool http_conn::open_managed_file(const string &path, const string &content_type, const string &download_name)
 {
     strncpy(m_real_file, path.c_str(), sizeof(m_real_file) - 1);

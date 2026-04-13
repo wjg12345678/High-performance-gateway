@@ -688,6 +688,15 @@ http_conn::HTTP_CODE http_conn::handle_api_request()
         return NOT_IMPLEMENTED;
     }
 
+    if (starts_with_ignore_case(m_url, "/api/private/operations/"))
+    {
+        const char *suffix = m_url + strlen("/api/private/operations/");
+        if (m_method == DELETE)
+        {
+            return handle_operation_delete(suffix);
+        }
+    }
+
     if (starts_with_ignore_case(m_url, "/api/private/files/"))
     {
         const char *suffix = m_url + strlen("/api/private/files/");

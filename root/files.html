@@ -363,6 +363,9 @@
                                     '<div class="mini">' + escapeHtml(item.created_at) + '</div>' +
                                 '</div>' +
                                 '<div class="meta">资源类型: ' + escapeHtml(item.resource_type) + ' / 资源 ID: ' + item.resource_id + '<br>详情: ' + escapeHtml(item.detail) + '</div>' +
+                                '<div class="row" style="margin-top: 14px;">' +
+                                    '<button type="button" class="ghost" data-log-delete="' + item.id + '">删除日志</button>' +
+                                '</div>' +
                             '</div>'
                         );
                     }).join("");
@@ -492,6 +495,30 @@
                         } catch (error) {
                             setStatus("删除失败: " + error.message, "error");
                         }
+                    }
+                });
+
+                logsList.addEventListener("click", async function (event) {
+                    const deleteLogId = event.target.getAttribute("data-log-delete");
+                    if (!deleteLogId) {
+                        return;
+                    }
+                    if (!state.token) {
+                        setStatus("请先登录，再从欢迎页进入文件管理台。", "error");
+                        return;
+                    }
+                    if (!window.confirm("确认删除日志 #" + deleteLogId + " 吗？")) {
+                        return;
+                    }
+                    try {
+                        await requestJson("/api/private/operations/" + deleteLogId, {
+                            method: "DELETE",
+                            headers: authHeaders()
+                        });
+                        setStatus("日志已删除。", "ok");
+                        await refreshLogs();
+                    } catch (error) {
+                        setStatus("删除日志失败: " + error.message, "error");
                     }
                 });
 
