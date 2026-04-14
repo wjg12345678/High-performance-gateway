@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS files (
     original_name VARCHAR(128) NOT NULL,
     content_type VARCHAR(128) NOT NULL DEFAULT 'text/plain',
     file_size BIGINT NOT NULL DEFAULT 0,
+    is_public TINYINT(1) NOT NULL DEFAULT 0,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (id),
     KEY idx_owner_username (owner_username)

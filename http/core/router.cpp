@@ -248,6 +248,10 @@ HttpConnection::HTTP_CODE HttpConnection::handle_api_request()
         set_memory_response(200, "OK", response, "application/json");
         return MEMORY_REQUEST;
     }
+    if (strcasecmp(m_url, "/api/files/public") == 0)
+    {
+        return m_method == GET ? handle_public_file_list() : NOT_IMPLEMENTED;
+    }
     if (strcasecmp(m_url, "/api/private/logout") == 0)
     {
         return m_method == POST ? handle_logout_request() : NOT_IMPLEMENTED;
@@ -275,8 +279,16 @@ HttpConnection::HTTP_CODE HttpConnection::handle_api_request()
         const char *suffix = m_url + strlen("/api/private/files/");
         if (m_method == GET && strstr(suffix, "/download") != nullptr)
             return handle_file_download(suffix);
+        if (m_method == POST && strstr(suffix, "/visibility") != nullptr)
+            return handle_file_visibility_update(suffix);
         if (m_method == DELETE)
             return handle_file_delete(suffix);
+    }
+    if (starts_with_ignore_case(m_url, "/api/files/public/"))
+    {
+        const char *suffix = m_url + strlen("/api/files/public/");
+        if (m_method == GET && strstr(suffix, "/download") != nullptr)
+            return handle_public_file_download(suffix);
     }
 
     set_memory_response(404, "Not Found", "{\"code\":404,\"message\":\"api not found\"}", "application/json");

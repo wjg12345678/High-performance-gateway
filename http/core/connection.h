@@ -206,8 +206,11 @@ private:
                              long resource_id, const string &detail);
     HTTP_CODE handle_file_upload();
     HTTP_CODE handle_file_list();
+    HTTP_CODE handle_public_file_list();
     HTTP_CODE handle_file_download(const char *path);
+    HTTP_CODE handle_public_file_download(const char *path);
     HTTP_CODE handle_file_delete(const char *path);
+    HTTP_CODE handle_file_visibility_update(const char *path);
     HTTP_CODE handle_operation_list();
     HTTP_CODE handle_operation_delete(const char *path);
     bool open_managed_file(const string &path, const string &content_type, const string &download_name);

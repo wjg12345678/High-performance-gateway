@@ -221,6 +221,16 @@
                                 <label for="upload-name">展示文件名</label>
                                 <input id="upload-name" name="filename" type="text" placeholder="可留空，默认使用上传文件名">
                             </div>
+                            <div>
+                                <label for="upload-public">可见范围</label>
+                                <div class="mini" style="margin-top: 6px;">公开文件允许别人查看和下载，但只有你自己可以删除。</div>
+                                <div style="margin-top: 10px;">
+                                    <label style="display: flex; align-items: center; gap: 10px; margin: 0;">
+                                        <input id="upload-public" name="is_public" type="checkbox" style="width: auto; min-height: auto;">
+                                        <span>上传为公开文件</span>
+                                    </label>
+                                </div>
+                            </div>
                             <button type="submit" class="secondary">上传文件</button>
                         </form>
 
@@ -237,16 +247,28 @@
                         <div class="toolbar section-copy">
                             <div>
                                 <h3 class="toolbar-title">文件列表</h3>
-                                <div class="mini">所有数据都来自 `/api/private/files` 和 `/api/private/operations`。</div>
+                                <div class="mini">这里展示你自己的文件，可下载、删除，并切换是否公开。</div>
                             </div>
                             <div class="row" style="min-width: 260px;">
                                 <button type="button" id="refresh-files-btn" class="ghost">刷新文件</button>
+                                <button type="button" id="refresh-public-files-btn" class="ghost">刷新公开区</button>
                                 <button type="button" id="refresh-logs-btn" class="ghost">刷新日志</button>
                             </div>
                         </div>
 
                         <div id="files-list" class="card-list">
                             <div class="empty">登录后可以查看文件列表。</div>
+                        </div>
+
+                        <div class="toolbar" style="margin-top: 24px;">
+                            <div>
+                                <h3 class="toolbar-title">公开文件</h3>
+                                <div class="mini">这里展示所有公开文件。任何人都可以下载，但不能删除你的文件。</div>
+                            </div>
+                        </div>
+
+                        <div id="public-files-list" class="card-list">
+                            <div class="empty">当前还没有公开文件。</div>
                         </div>
 
                         <div class="toolbar" style="margin-top: 24px;">
@@ -274,13 +296,16 @@
 
                 const uploadForm = document.getElementById("upload-form");
                 const refreshFilesBtn = document.getElementById("refresh-files-btn");
+                const refreshPublicFilesBtn = document.getElementById("refresh-public-files-btn");
                 const refreshLogsBtn = document.getElementById("refresh-logs-btn");
                 const tokenBox = document.getElementById("token-box");
                 const statusBox = document.getElementById("status-box");
                 const filesList = document.getElementById("files-list");
+                const publicFilesList = document.getElementById("public-files-list");
                 const logsList = document.getElementById("logs-list");
                 const uploadFileInput = document.getElementById("upload-file");
                 const uploadNameInput = document.getElementById("upload-name");
+                const uploadPublicInput = document.getElementById("upload-public");
 
                 function updateTokenBox() {
                     if (!state.token) {
@@ -341,10 +366,32 @@
                                     '<div class="file-name">' + escapeHtml(file.filename) + '</div>' +
                                     '<div class="mini">#' + file.id + '</div>' +
                                 '</div>' +
-                                '<div class="meta">类型: ' + escapeHtml(file.content_type) + '<br>大小: ' + file.size + ' bytes<br>创建时间: ' + escapeHtml(file.created_at) + '</div>' +
+                                '<div class="meta">类型: ' + escapeHtml(file.content_type) + '<br>大小: ' + file.size + ' bytes<br>创建时间: ' + escapeHtml(file.created_at) + '<br>可见范围: ' + (file.is_public ? '公开' : '仅自己可见') + '</div>' +
                                 '<div class="row" style="margin-top: 14px;">' +
                                     '<button type="button" class="ghost" data-download="' + file.id + '">下载</button>' +
+                                    '<button type="button" class="ghost" data-visibility="' + file.id + '" data-public="' + (file.is_public ? '1' : '0') + '">' + (file.is_public ? '设为私有' : '设为公开') + '</button>' +
                                     '<button type="button" class="ghost" data-delete="' + file.id + '">删除</button>' +
+                                '</div>' +
+                            '</div>'
+                        );
+                    }).join("");
+                }
+
+                function renderPublicFiles(files) {
+                    if (!files || !files.length) {
+                        publicFilesList.innerHTML = '<div class="empty">当前还没有公开文件。</div>';
+                        return;
+                    }
+                    publicFilesList.innerHTML = files.map(function (file) {
+                        return (
+                            '<div class="file-card">' +
+                                '<div class="file-top">' +
+                                    '<div class="file-name">' + escapeHtml(file.filename) + '</div>' +
+                                    '<div class="mini">#' + file.id + '</div>' +
+                                '</div>' +
+                                '<div class="meta">上传者: ' + escapeHtml(file.owner) + '<br>类型: ' + escapeHtml(file.content_type) + '<br>大小: ' + file.size + ' bytes<br>创建时间: ' + escapeHtml(file.created_at) + '</div>' +
+                                '<div class="row" style="margin-top: 14px;">' +
+                                    '<button type="button" class="ghost" data-public-download="' + file.id + '">下载</button>' +
                                 '</div>' +
                             '</div>'
                         );
@@ -392,6 +439,11 @@
                     renderFiles(data.files || []);
                 }
 
+                async function refreshPublicFiles() {
+                    const data = await requestJson("/api/files/public");
+                    renderPublicFiles(data.files || []);
+                }
+
                 async function refreshLogs() {
                     if (!state.token) {
                         renderLogs([]);
@@ -404,7 +456,7 @@
                 }
 
                 async function refreshAll() {
-                    await Promise.all([refreshFiles(), refreshLogs()]);
+                    await Promise.all([refreshFiles(), refreshPublicFiles(), refreshLogs()]);
                 }
 
                 uploadForm.addEventListener("submit", async function (event) {
@@ -434,7 +486,8 @@
                             body: JSON.stringify({
                                 filename: fileName,
                                 content_base64: contentBase64,
-                                content_type: file.type || "application/octet-stream"
+                                content_type: file.type || "application/octet-stream",
+                                is_public: uploadPublicInput.checked
                             })
                         });
                         uploadForm.reset();
@@ -448,6 +501,7 @@
                 filesList.addEventListener("click", async function (event) {
                     const downloadId = event.target.getAttribute("data-download");
                     const deleteId = event.target.getAttribute("data-delete");
+                    const visibilityId = event.target.getAttribute("data-visibility");
 
                     if (downloadId) {
                         if (!state.token) {
@@ -478,6 +532,22 @@
                         return;
                     }
 
+                    if (visibilityId) {
+                        const nextPublic = event.target.getAttribute("data-public") !== "1";
+                        try {
+                            await requestJson("/api/private/files/" + visibilityId + "/visibility", {
+                                method: "POST",
+                                headers: Object.assign({ "Content-Type": "application/json" }, authHeaders()),
+                                body: JSON.stringify({ is_public: nextPublic })
+                            });
+                            setStatus(nextPublic ? "文件已设为公开。" : "文件已设为私有。", "ok");
+                            await refreshAll();
+                        } catch (error) {
+                            setStatus("更新可见范围失败: " + error.message, "error");
+                        }
+                        return;
+                    }
+
                     if (deleteId) {
                         if (!state.token) {
                             setStatus("请先登录，再从欢迎页进入文件管理台。", "error");
@@ -497,6 +567,34 @@
                             setStatus("删除失败: " + error.message, "error");
                         }
                     }
+                });
+
+                publicFilesList.addEventListener("click", async function (event) {
+                    const publicDownloadId = event.target.getAttribute("data-public-download");
+                    if (!publicDownloadId) {
+                        return;
+                    }
+
+                    const response = await fetch("/api/files/public/" + publicDownloadId + "/download", {
+                        headers: authHeaders()
+                    });
+                    if (!response.ok) {
+                        const text = await response.text();
+                        setStatus("公开文件下载失败: " + text, "error");
+                        return;
+                    }
+                    const blob = await response.blob();
+                    const url = URL.createObjectURL(blob);
+                    const link = document.createElement("a");
+                    const disposition = response.headers.get("Content-Disposition") || "";
+                    const match = disposition.match(/filename="([^"]+)"/);
+                    link.href = url;
+                    link.download = match ? match[1] : ("file-" + publicDownloadId);
+                    document.body.appendChild(link);
+                    link.click();
+                    link.remove();
+                    URL.revokeObjectURL(url);
+                    setStatus("已触发公开文件下载。", "ok");
                 });
 
                 logsList.addEventListener("click", async function (event) {
@@ -533,6 +631,16 @@
                         });
                 });
 
+                refreshPublicFilesBtn.addEventListener("click", function () {
+                    refreshPublicFiles()
+                        .then(function () {
+                            setStatus("公开文件列表已刷新。", "ok");
+                        })
+                        .catch(function (error) {
+                            setStatus("刷新公开文件失败: " + error.message, "error");
+                        });
+                });
+
                 refreshLogsBtn.addEventListener("click", function () {
                     refreshLogs()
                         .then(function () {
@@ -551,11 +659,15 @@
                         })
                         .catch(function () {
                             renderFiles([]);
+                            renderPublicFiles([]);
                             renderLogs([]);
                             setStatus("当前登录态已失效，请回到登录页重新登录。", "error");
                         });
                 } else {
                     renderFiles([]);
+                    refreshPublicFiles().catch(function () {
+                        renderPublicFiles([]);
+                    });
                     renderLogs([]);
                     setStatus("请先登录，再从欢迎页进入文件管理台。", "error");
                 }

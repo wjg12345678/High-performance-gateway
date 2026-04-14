@@ -14,7 +14,7 @@ bool fetch_file_record(MYSQL *mysql, long file_id, ManagedFileRecord &record)
 
     char query[512];
     snprintf(query, sizeof(query),
-             "SELECT owner_username, stored_name, original_name, content_type, file_size "
+             "SELECT owner_username, stored_name, original_name, content_type, file_size, is_public "
              "FROM files WHERE id=%ld LIMIT 1",
              file_id);
     if (mysql_query(mysql, query) != 0)
@@ -41,6 +41,7 @@ bool fetch_file_record(MYSQL *mysql, long file_id, ManagedFileRecord &record)
     record.original_name = row[2] ? row[2] : "";
     record.content_type = row[3] ? row[3] : "application/octet-stream";
     record.file_size = row[4] ? atol(row[4]) : 0;
+    record.is_public = row[5] ? atoi(row[5]) != 0 : false;
     mysql_free_result(result);
     return true;
 }

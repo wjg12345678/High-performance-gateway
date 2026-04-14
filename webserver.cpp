@@ -2,6 +2,8 @@
 
 #include <openssl/err.h>
 
+#include "./CGImysql/sql_connection_pool.h"
+
 WebServer::WebServer()
     : m_https_enable(0), m_ssl_ctx(nullptr), m_epollfd(-1), m_connPool(nullptr),
       m_listenfd(-1), m_sub_reactor_num(1), m_next_sub_reactor(0)
@@ -153,6 +155,12 @@ void WebServer::sql_pool()
 {
     m_connPool = connection_pool::GetInstance();
     m_connPool->init(m_dbHost, m_user, m_passWord, m_databaseName, m_dbPort, m_sql_num, m_close_log, m_mysql_idle_timeout);
+    MYSQL *mysql = nullptr;
+    connectionRAII mysqlcon(&mysql, m_connPool);
+    if (mysql != nullptr)
+    {
+        mysql_query(mysql, "ALTER TABLE files ADD COLUMN is_public TINYINT(1) NOT NULL DEFAULT 0");
+    }
     users[0].initmysql_result(m_connPool);
 }
 
