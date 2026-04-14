@@ -14,6 +14,85 @@ namespace
 {
 const size_t kManagedUploadLimitBytes = 64 * 1024;
 
+bool ends_with_ignore_case(const string &value, const string &suffix)
+{
+    if (suffix.size() > value.size())
+    {
+        return false;
+    }
+
+    const size_t offset = value.size() - suffix.size();
+    for (size_t i = 0; i < suffix.size(); ++i)
+    {
+        if (tolower(static_cast<unsigned char>(value[offset + i])) !=
+            tolower(static_cast<unsigned char>(suffix[i])))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool starts_with_html_document(const string &path)
+{
+    ifstream input(path.c_str(), ios::in | ios::binary);
+    if (!input.is_open())
+    {
+        return false;
+    }
+
+    char buffer[256];
+    input.read(buffer, sizeof(buffer));
+    const streamsize count = input.gcount();
+    if (count <= 0)
+    {
+        return false;
+    }
+
+    string sample(buffer, static_cast<size_t>(count));
+    size_t pos = 0;
+    while (pos < sample.size())
+    {
+        unsigned char ch = static_cast<unsigned char>(sample[pos]);
+        if (ch == 0xEF && pos + 2 < sample.size() &&
+            static_cast<unsigned char>(sample[pos + 1]) == 0xBB &&
+            static_cast<unsigned char>(sample[pos + 2]) == 0xBF)
+        {
+            pos += 3;
+            continue;
+        }
+        if (!isspace(ch))
+        {
+            break;
+        }
+        ++pos;
+    }
+
+    const string prefix = sample.substr(pos);
+    return prefix.compare(0, 15, "<!DOCTYPE html") == 0 ||
+           prefix.compare(0, 5, "<html") == 0 ||
+           prefix.compare(0, 14, "<!doctype html") == 0;
+}
+
+void normalize_download_metadata(const string &path, string &content_type, string &download_name)
+{
+    if (ends_with_ignore_case(download_name, ".html") || ends_with_ignore_case(download_name, ".htm"))
+    {
+        if (content_type.empty() || content_type == "text/plain" || content_type == "application/octet-stream")
+        {
+            content_type = "text/html; charset=utf-8";
+        }
+        return;
+    }
+
+    if ((content_type == "text/plain" || content_type == "application/octet-stream") &&
+        starts_with_html_document(path))
+    {
+        content_type = "text/html; charset=utf-8";
+        download_name += ".html";
+    }
+}
+
 bool parse_public_flag(const string &value)
 {
     return value == "1" || value == "true" || value == "TRUE" || value == "yes" || value == "on";
@@ -392,9 +471,13 @@ bool HttpConnection::open_managed_file(const string &path, const string &content
         return false;
     }
 
-    strncpy(m_response_content_type, content_type.c_str(), sizeof(m_response_content_type) - 1);
-    string safe_name = http_file_helpers::sanitize_download_filename(download_name);
-    string encoded_name = http_file_helpers::encode_download_filename(download_name);
+    string resolved_content_type = content_type.empty() ? "application/octet-stream" : content_type;
+    string resolved_download_name = download_name.empty() ? "download.txt" : download_name;
+    normalize_download_metadata(path, resolved_content_type, resolved_download_name);
+
+    strncpy(m_response_content_type, resolved_content_type.c_str(), sizeof(m_response_content_type) - 1);
+    string safe_name = http_file_helpers::sanitize_download_filename(resolved_download_name);
+    string encoded_name = http_file_helpers::encode_download_filename(resolved_download_name);
     m_extra_headers = string("Content-Disposition: attachment; filename=\"") + safe_name +
                       "\"; filename*=UTF-8''" + encoded_name + "\r\n";
     return true;

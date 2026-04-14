@@ -18,7 +18,7 @@
                 <article class="hero">
                     <p class="eyebrow">Sign In</p>
                     <h1>登录 Atlas WebServer</h1>
-                    <p>登录后可进入统一控制台，继续访问照片、视频和文件管理台。文件管理页会直接复用当前登录态。</p>
+                    <p>登录后可进入统一控制台，继续访问图片、视频和文件管理空间，文件管理页会自动复用当前会话。</p>
                     <div class="center-actions">
                         <a class="link-button secondary" href="./register.html">去注册</a>
                         <a class="link-button secondary" href="./index.html">返回入口</a>
@@ -37,9 +37,9 @@
                             <label for="login-password">登录密码</label>
                             <input id="login-password" type="password" name="password" placeholder="请输入密码" required="required">
                         </div>
-                        <button type="submit">登录并进入控制台</button>
-                    </form>
-                    <div id="login-status" class="hint">支持页面登录流程，也支持调用 `/api/login` 进行接口验证。</div>
+                    <button type="submit">登录并进入控制台</button>
+                </form>
+                    <div id="login-status" class="hint">登录成功后将自动进入控制台，并同步写入当前浏览器会话。</div>
                 </article>
             </section>
         </div>
@@ -90,11 +90,11 @@
                             throw new Error(data.message || ("HTTP " + response.status));
                         }
 
-                        localStorage.setItem("tws_demo_token", data.token);
-                        localStorage.setItem("tws_demo_user", username);
+                        sessionStorage.setItem("tws_demo_token", data.token);
+                        sessionStorage.setItem("tws_demo_user", username);
                         window.location.href = data.target || "/welcome.html";
                     } catch (error) {
-                        setStatus("登录失败: " + error.message, true);
+                        setStatus("登录未完成: " + error.message, true);
                     }
                 });
             })();

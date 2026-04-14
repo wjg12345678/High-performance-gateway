@@ -158,8 +158,9 @@
                 border-radius: 16px;
                 padding: 14px;
                 background: rgba(47, 36, 25, 0.06);
-                font-size: 12px;
-                line-height: 1.6;
+                font-size: 18px;
+                font-weight: 600;
+                line-height: 1.5;
                 word-break: break-all;
             }
 
@@ -199,31 +200,31 @@
             <section class="hero">
                 <p class="eyebrow">Atlas WebServer File Console</p>
                 <h1>文件管理台</h1>
-                <p>这个页面直接调用当前 C++ 服务端的登录、鉴权、上传、列表、下载和操作日志接口，用来展示完整的小文件业务闭环，而不是零散的演示页面。</p>
+                <p>这里集中承载文件上传、列表浏览、下载、权限切换与操作记录，提供统一的文件协作界面。</p>
             </section>
 
             <div class="grid">
                 <section class="panel">
                     <div class="panel-head">
                         <h2>上传与状态</h2>
-                        <p>复用当前登录态上传文件并查看结果，不需要在这个页面再次登录。</p>
+                        <p>当前页面会自动复用已登录账号，可上传文件并查看处理结果。</p>
                     </div>
                     <div class="panel-body">
-                        <div id="token-box" class="token-box">请先从登录后的欢迎页进入文件管理台。</div>
+                        <div id="token-box" class="token-box">请先完成登录，再进入文件管理台。</div>
 
                         <form id="upload-form" class="stack" style="margin-top: 18px;">
                             <div>
                                 <label for="upload-file">选择文件</label>
                                 <input id="upload-file" name="file" type="file" required>
-                                <div class="mini" style="margin-top: 6px;">当前演示仅支持 64 KB 以内的小文件上传，前后端限制保持一致。</div>
+                                <div class="mini" style="margin-top: 6px;">当前版本支持 64 KB 以内的小文件上传，页面与服务端限制保持一致。</div>
                             </div>
                             <div>
                                 <label for="upload-name">展示文件名</label>
-                                <input id="upload-name" name="filename" type="text" placeholder="可留空，默认使用上传文件名">
+                                <input id="upload-name" name="filename" type="text" placeholder="可留空，系统将默认使用原文件名">
                             </div>
                             <div>
                                 <label for="upload-public">可见范围</label>
-                                <div class="mini" style="margin-top: 6px;">公开文件允许别人查看和下载，但只有你自己可以删除。</div>
+                                <div class="mini" style="margin-top: 6px;">公开文件面向所有访问者开放查看与下载，删除权限仍由文件所有者保留。</div>
                                 <div style="margin-top: 10px;">
                                     <label style="display: flex; align-items: center; gap: 10px; margin: 0;">
                                         <input id="upload-public" name="is_public" type="checkbox" style="width: auto; min-height: auto;">
@@ -234,20 +235,20 @@
                             <button type="submit" class="secondary">上传文件</button>
                         </form>
 
-                        <div id="status-box" class="status">等待操作。</div>
+                        <div id="status-box" class="status">等待处理。</div>
                     </div>
                 </section>
 
                 <section class="panel">
                     <div class="panel-head">
                         <h2>文件与操作日志</h2>
-                        <p>支持刷新文件列表、下载、删除，并查看最近操作日志。</p>
+                        <p>可在此刷新文件列表、执行下载与删除操作，并查看最新操作记录。</p>
                     </div>
                     <div class="panel-body">
                         <div class="toolbar section-copy">
                             <div>
                                 <h3 class="toolbar-title">文件列表</h3>
-                                <div class="mini">这里展示你自己的文件，可下载、删除，并切换是否公开。</div>
+                                <div class="mini">这里展示当前账号的文件，可执行下载、删除与公开范围设置。</div>
                             </div>
                             <div class="row" style="min-width: 260px;">
                                 <button type="button" id="refresh-files-btn" class="ghost">刷新文件</button>
@@ -263,18 +264,18 @@
                         <div class="toolbar" style="margin-top: 24px;">
                             <div>
                                 <h3 class="toolbar-title">公开文件</h3>
-                                <div class="mini">这里展示所有公开文件。任何人都可以下载，但不能删除你的文件。</div>
+                                <div class="mini">这里展示所有公开文件，访问者可下载内容，删除权限仅归文件所有者。</div>
                             </div>
                         </div>
 
                         <div id="public-files-list" class="card-list">
-                            <div class="empty">当前还没有公开文件。</div>
+                            <div class="empty">公开文件区暂无内容。</div>
                         </div>
 
                         <div class="toolbar" style="margin-top: 24px;">
                             <div>
                                 <h3 class="toolbar-title">操作日志</h3>
-                                <div class="mini">用于展示登录、上传、下载、删除等操作行为。</div>
+                                <div class="mini">这里记录登录、上传、下载、删除等关键操作，便于查看最近处理轨迹。</div>
                             </div>
                         </div>
 
@@ -290,8 +291,8 @@
             (function () {
                 const MAX_UPLOAD_SIZE = 64 * 1024;
                 const state = {
-                    token: localStorage.getItem("tws_demo_token") || "",
-                    username: localStorage.getItem("tws_demo_user") || ""
+                    token: sessionStorage.getItem("tws_demo_token") || "",
+                    username: sessionStorage.getItem("tws_demo_user") || ""
                 };
 
                 const uploadForm = document.getElementById("upload-form");
@@ -309,10 +310,10 @@
 
                 function updateTokenBox() {
                     if (!state.token) {
-                        tokenBox.textContent = "当前未检测到登录态，请先回到登录页完成登录，再从欢迎页进入文件管理台。";
+                        tokenBox.textContent = "当前未检测到有效登录信息，请先完成登录后再进入文件管理台。";
                         return;
                     }
-                    tokenBox.textContent = "当前用户: " + (state.username || "unknown") + "\n已复用当前登录态，无需再次登录。";
+                    tokenBox.textContent = "当前用户: " + (state.username || "unknown");
                 }
 
                 function setStatus(message, type) {
@@ -333,7 +334,7 @@
                             resolve(commaIndex >= 0 ? result.slice(commaIndex + 1) : result);
                         };
                         reader.onerror = function () {
-                            reject(new Error("文件读取失败"));
+                            reject(new Error("文件读取未完成"));
                         };
                         reader.readAsDataURL(file);
                     });
@@ -356,7 +357,7 @@
 
                 function renderFiles(files) {
                     if (!files || !files.length) {
-                        filesList.innerHTML = '<div class="empty">当前没有文件，先上传一个试试。</div>';
+                        filesList.innerHTML = '<div class="empty">当前账号下暂无文件。</div>';
                         return;
                     }
                     filesList.innerHTML = files.map(function (file) {
@@ -379,7 +380,7 @@
 
                 function renderPublicFiles(files) {
                     if (!files || !files.length) {
-                        publicFilesList.innerHTML = '<div class="empty">当前还没有公开文件。</div>';
+                        publicFilesList.innerHTML = '<div class="empty">公开文件区暂无内容。</div>';
                         return;
                     }
                     publicFilesList.innerHTML = files.map(function (file) {
@@ -400,7 +401,7 @@
 
                 function renderLogs(logs) {
                     if (!logs || !logs.length) {
-                        logsList.innerHTML = '<div class="empty">当前还没有操作日志。</div>';
+                        logsList.innerHTML = '<div class="empty">当前暂无操作记录。</div>';
                         return;
                     }
                     logsList.innerHTML = logs.map(function (item) {
@@ -462,7 +463,7 @@
                 uploadForm.addEventListener("submit", async function (event) {
                     event.preventDefault();
                     if (!state.token) {
-                        setStatus("请先登录，再从欢迎页进入文件管理台。", "error");
+                        setStatus("请先登录后再进入文件管理台。", "error");
                         return;
                     }
                     if (!uploadFileInput.files.length) {
@@ -473,11 +474,11 @@
                     const file = uploadFileInput.files[0];
                     const fileName = uploadNameInput.value.trim() || file.name;
                     if (file.size > MAX_UPLOAD_SIZE) {
-                        setStatus("当前演示只支持 64 KB 以内的小文件。", "error");
+                        setStatus("当前版本支持 64 KB 以内的小文件上传。", "error");
                         return;
                     }
 
-                    setStatus("正在上传文件...", "");
+                    setStatus("文件上传中...", "");
                     try {
                         const contentBase64 = await fileToBase64(file);
                         const data = await requestJson("/api/private/files", {
@@ -491,10 +492,10 @@
                             })
                         });
                         uploadForm.reset();
-                        setStatus("上传成功，文件 ID: " + data.file.id, "ok");
+                        setStatus("文件已上传，文件 ID: " + data.file.id, "ok");
                         await refreshAll();
                     } catch (error) {
-                        setStatus("上传失败: " + error.message, "error");
+                        setStatus("上传未完成: " + error.message, "error");
                     }
                 });
 
@@ -505,7 +506,7 @@
 
                     if (downloadId) {
                         if (!state.token) {
-                            setStatus("请先登录，再从欢迎页进入文件管理台。", "error");
+                            setStatus("请先登录后再进入文件管理台。", "error");
                             return;
                         }
                         const response = await fetch("/api/private/files/" + downloadId + "/download", {
@@ -513,7 +514,7 @@
                         });
                         if (!response.ok) {
                             const text = await response.text();
-                            setStatus("下载失败: " + text, "error");
+                            setStatus("下载未完成: " + text, "error");
                             return;
                         }
                         const blob = await response.blob();
@@ -527,7 +528,7 @@
                         link.click();
                         link.remove();
                         URL.revokeObjectURL(url);
-                        setStatus("已触发下载。", "ok");
+                        setStatus("下载任务已开始。", "ok");
                         refreshLogs().catch(function () {});
                         return;
                     }
@@ -543,14 +544,14 @@
                             setStatus(nextPublic ? "文件已设为公开。" : "文件已设为私有。", "ok");
                             await refreshAll();
                         } catch (error) {
-                            setStatus("更新可见范围失败: " + error.message, "error");
+                            setStatus("可见范围更新未完成: " + error.message, "error");
                         }
                         return;
                     }
 
                     if (deleteId) {
                         if (!state.token) {
-                            setStatus("请先登录，再从欢迎页进入文件管理台。", "error");
+                            setStatus("请先登录后再进入文件管理台。", "error");
                             return;
                         }
                         if (!window.confirm("确认删除文件 #" + deleteId + " 吗？")) {
@@ -564,7 +565,7 @@
                             setStatus("文件已删除。", "ok");
                             await refreshAll();
                         } catch (error) {
-                            setStatus("删除失败: " + error.message, "error");
+                            setStatus("文件删除未完成: " + error.message, "error");
                         }
                     }
                 });
@@ -580,7 +581,7 @@
                     });
                     if (!response.ok) {
                         const text = await response.text();
-                        setStatus("公开文件下载失败: " + text, "error");
+                        setStatus("公开文件下载未完成: " + text, "error");
                         return;
                     }
                     const blob = await response.blob();
@@ -594,7 +595,7 @@
                     link.click();
                     link.remove();
                     URL.revokeObjectURL(url);
-                    setStatus("已触发公开文件下载。", "ok");
+                    setStatus("公开文件下载任务已开始。", "ok");
                 });
 
                 logsList.addEventListener("click", async function (event) {
@@ -603,7 +604,7 @@
                         return;
                     }
                     if (!state.token) {
-                        setStatus("请先登录，再从欢迎页进入文件管理台。", "error");
+                        setStatus("请先登录后再进入文件管理台。", "error");
                         return;
                     }
                     if (!window.confirm("确认删除日志 #" + deleteLogId + " 吗？")) {
@@ -617,7 +618,7 @@
                         setStatus("日志已删除。", "ok");
                         await refreshLogs();
                     } catch (error) {
-                        setStatus("删除日志失败: " + error.message, "error");
+                        setStatus("日志删除未完成: " + error.message, "error");
                     }
                 });
 
@@ -627,27 +628,27 @@
                             setStatus("文件列表已刷新。", "ok");
                         })
                         .catch(function (error) {
-                            setStatus("刷新文件失败: " + error.message, "error");
+                            setStatus("文件列表刷新未完成: " + error.message, "error");
                         });
                 });
 
                 refreshPublicFilesBtn.addEventListener("click", function () {
                     refreshPublicFiles()
                         .then(function () {
-                            setStatus("公开文件列表已刷新。", "ok");
+                            setStatus("公开文件列表已更新。", "ok");
                         })
                         .catch(function (error) {
-                            setStatus("刷新公开文件失败: " + error.message, "error");
+                            setStatus("公开文件列表刷新未完成: " + error.message, "error");
                         });
                 });
 
                 refreshLogsBtn.addEventListener("click", function () {
                     refreshLogs()
                         .then(function () {
-                            setStatus("日志列表已刷新。", "ok");
+                            setStatus("操作记录已更新。", "ok");
                         })
                         .catch(function (error) {
-                            setStatus("刷新日志失败: " + error.message, "error");
+                            setStatus("操作记录刷新未完成: " + error.message, "error");
                         });
                 });
 
@@ -655,13 +656,13 @@
                 if (state.token) {
                     refreshAll()
                         .then(function () {
-                            setStatus("已恢复本地登录态。", "ok");
+                            setStatus("已恢复当前登录状态。", "ok");
                         })
                         .catch(function () {
                             renderFiles([]);
                             renderPublicFiles([]);
                             renderLogs([]);
-                            setStatus("当前登录态已失效，请回到登录页重新登录。", "error");
+                            setStatus("当前登录状态已过期，请返回登录页完成登录。", "error");
                         });
                 } else {
                     renderFiles([]);
@@ -669,7 +670,7 @@
                         renderPublicFiles([]);
                     });
                     renderLogs([]);
-                    setStatus("请先登录，再从欢迎页进入文件管理台。", "error");
+                    setStatus("请先登录后再进入文件管理台。", "error");
                 }
             })();
         </script>

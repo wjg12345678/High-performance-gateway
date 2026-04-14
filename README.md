@@ -35,6 +35,15 @@
 - 引入 MySQL 会话持久化、文件元数据和操作审计，使项目从“网络程序 Demo”升级为“带真实业务闭环的服务端项目”
 - 补齐 Docker Compose、健康检查、Smoke Test、分层压测矩阵和结构化文档，形成“可运行、可验证、可讲解”的展示闭环
 
+## 最近精进
+
+- 将 HTTP 层目录进一步按子域收敛为 `http/core`、`http/api`、`http/files`，让连接编排、鉴权接口和文件业务的职责边界更稳定
+- 文件业务补齐公开文件列表、公开下载、私有可见范围切换和操作审计，形成“上传 - 分享 - 下载 - 删除 - 追踪”的完整闭环
+- 文件下载链路补充 UTF-8 文件名兼容与历史元数据兜底，减少中文文件名和旧记录下载时的类型错配问题
+- 前端页面统一为产品化表达，清理展示页口吻，保留统一视觉风格，并把文件页状态提示、空态和操作反馈一起规范化
+- 登录态从 `localStorage` 收敛为 `sessionStorage`，避免同一浏览器新开标签页自动复用账号，交互更符合控制台场景
+- 上传样例支持直接作为轻量 HTML 用户文档分发，继续保持单文件体积低于 `64 KB`
+
 ---
 
 ## 目录
@@ -187,16 +196,18 @@ flowchart TB
 
 ```mermaid
 flowchart LR
-    Conn[http_conn.cpp\n编排 / 路由 / 中间件]
-    Parser[http_parser.cpp\n请求行 / Header / Body 解析]
-    IO[http_io.cpp\nring buffer / TLS / read/write]
-    Resp[http_response.cpp\n响应头 / 响应体拼装]
-    Runtime[http_runtime.cpp\nprocess / write 生命周期]
-    Auth[http_auth.cpp\n登录 / 会话 / 鉴权]
-    FileSvc[http_file_service.cpp\n文件上传下载 / 审计]
-    Utils[http_utils.cpp\n转义 / 解码 / JSON 辅助]
+    Conn[core/connection.cpp\n连接编排 / 生命周期]
+    Router[core/router.cpp\n路由 / 静态资源 / API 分发]
+    Parser[core/parser.cpp\n请求行 / Header / Body 解析]
+    IO[core/io.cpp\nring buffer / TLS / read/write]
+    Resp[core/response.cpp\n响应头 / 响应体拼装]
+    Runtime[core/runtime.cpp\nprocess / write 生命周期]
+    Auth[api/auth.cpp\n登录 / 注册 / 鉴权]
+    FileSvc[files/file_service.cpp\n文件上传下载 / 分享 / 审计]
+    Utils[core/utils.cpp\n转义 / 解码 / JSON 辅助]
 
     Conn --> Parser
+    Conn --> Router
     Conn --> Resp
     Conn --> Runtime
     Conn --> Auth
@@ -212,14 +223,18 @@ flowchart LR
 
 | 模块 | 职责 |
 | --- | --- |
-| `http_conn.cpp` | 请求编排、中间件、路由分发、静态资源入口 |
-| `http_parser.cpp` | 请求行、请求头、请求体、JSON / 表单 / multipart 解析 |
-| `http_io.cpp` | 环形缓冲区、socket 收发、TLS 握手、ET 模式读写 |
-| `http_response.cpp` | HTTP 响应格式拼装、错误响应构造 |
-| `http_runtime.cpp` | `process()` 和 `write()` 生命周期调度 |
-| `http_auth.cpp` | 注册、登录、会话持久化、Bearer Token 校验 |
-| `http_file_service.cpp` | 文件上传、列表、下载、删除、操作日志 |
-| `http_utils.cpp` | URL 解码、SQL 转义、JSON 转义、Base64 解码 |
+| `http/core/connection.cpp` | 请求编排、连接状态维护、核心入口 |
+| `http/core/router.cpp` | 路由分发、静态资源入口、API 映射 |
+| `http/core/parser.cpp` | 请求行、请求头、请求体、JSON / 表单 / multipart 解析 |
+| `http/core/io.cpp` | 环形缓冲区、socket 收发、TLS 握手、ET 模式读写 |
+| `http/core/response.cpp` | HTTP 响应格式拼装、错误响应构造 |
+| `http/core/runtime.cpp` | `process()` 和 `write()` 生命周期调度 |
+| `http/api/auth.cpp` | 注册、登录、会话持久化、Bearer Token 校验 |
+| `http/api/auth_session.cpp` | 会话恢复、私有接口鉴权中间层 |
+| `http/api/operation_service.cpp` | 操作日志查询与删除 |
+| `http/files/file_service.cpp` | 文件上传、列表、公开区、下载、删除、可见范围切换 |
+| `http/files/file_helpers.cpp` | 文件名清洗、下载名编码、磁盘路径辅助 |
+| `http/core/utils.cpp` | URL 解码、SQL 转义、JSON 转义、Base64 解码 |
 
 ### 其他基础设施模块
 
@@ -613,7 +628,10 @@ curl -k https://127.0.0.1:9006/
 
 ### 页面入口
 
+- `/`
+- `/index.html`
 - `/register.html`
+- `/login.html`
 - `/log.html`
 - `/welcome.html`
 - `/files.html`
@@ -629,9 +647,13 @@ curl -k https://127.0.0.1:9006/
 | `POST` | `/api/private/logout` | 退出登录 |
 | `POST` | `/api/private/files` | 上传小文件 |
 | `GET` | `/api/private/files` | 当前用户文件列表 |
+| `POST` | `/api/private/files/:id/visibility` | 切换文件公开范围 |
 | `GET` | `/api/private/files/:id/download` | 下载文件 |
 | `DELETE` | `/api/private/files/:id` | 删除文件 |
+| `GET` | `/api/files/public` | 公开文件列表 |
+| `GET` | `/api/files/public/:id/download` | 公开文件下载 |
 | `GET` | `/api/private/operations` | 查询最近操作日志 |
+| `DELETE` | `/api/private/operations/:id` | 删除操作日志 |
 
 ### 接口示例
 
@@ -696,7 +718,7 @@ scripts/run_smoke_suite.sh
 - 服务启动与健康检查
 - 用户注册 / 登录
 - Token 生成与私有接口访问
-- 文件上传 / 列表 / 下载 / 删除
+- 文件上传 / 私有列表 / 公开列表 / 下载 / 删除 / 可见范围切换
 - 操作日志写入
 - 退出登录
 
@@ -774,20 +796,33 @@ scripts/run_smoke_suite.sh
 ├── certs/                    # HTTPS 证书
 ├── docs/                     # 架构、时序、压测文档
 ├── http/                     # HTTP 模块拆分目录
-│   ├── http_conn.cpp
-│   ├── http_conn.h
-│   ├── http_parser.cpp
-│   ├── http_io.cpp
-│   ├── http_response.cpp
-│   ├── http_runtime.cpp
-│   ├── http_auth.cpp
-│   ├── http_auth_state.h
-│   ├── http_file_service.cpp
-│   └── http_utils.cpp
+│   ├── api/
+│   │   ├── auth.cpp
+│   │   ├── auth_session.cpp
+│   │   ├── auth_state.cpp
+│   │   ├── auth_state.h
+│   │   └── operation_service.cpp
+│   ├── core/
+│   │   ├── connection.cpp
+│   │   ├── connection.h
+│   │   ├── io.cpp
+│   │   ├── parser.cpp
+│   │   ├── response.cpp
+│   │   ├── ring_buffer.h
+│   │   ├── router.cpp
+│   │   ├── runtime.cpp
+│   │   └── utils.cpp
+│   └── files/
+│       ├── file_helpers.cpp
+│       ├── file_helpers.h
+│       ├── file_service.cpp
+│       ├── file_store.cpp
+│       ├── file_store.h
+│       └── file_types.h
 ├── lock/                     # 同步原语封装
 ├── log/                      # 日志系统
 ├── memorypool/               # 内存池
-├── root/                     # 页面资源与上传目录
+├── root/                     # 页面资源、产品化静态页与上传目录
 ├── scripts/                  # smoke test 脚本
 ├── test_pressure/            # wrk 压测脚本
 ├── threadpool/               # 动态线程池
