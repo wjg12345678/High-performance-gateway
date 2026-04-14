@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Atlas WebServer | 文件分享</title>
+        <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+        <link rel="stylesheet" href="./atlas.css">
+        <style>
+            .shell {
+                width: min(760px, calc(100% - 32px));
+            }
+
+            .card {
+                border: 1px solid rgba(159, 77, 47, 0.15);
+                border-radius: 28px;
+                background: var(--panel-strong);
+                box-shadow: var(--shadow);
+                padding: 24px;
+            }
+
+            .file-name {
+                margin: 0;
+                font-size: clamp(28px, 5vw, 40px);
+                line-height: 1.2;
+            }
+
+            .meta {
+                margin-top: 14px;
+                color: var(--muted);
+                font-size: 14px;
+                line-height: 1.7;
+            }
+
+            .status {
+                margin-top: 18px;
+                padding: 14px 16px;
+                border-radius: 16px;
+                background: rgba(159, 77, 47, 0.08);
+                color: var(--muted);
+                line-height: 1.6;
+            }
+
+            .status.error {
+                background: rgba(165, 87, 34, 0.12);
+                color: var(--warn);
+            }
+
+            .actions {
+                margin-top: 22px;
+                display: flex;
+                gap: 12px;
+                flex-wrap: wrap;
+            }
+
+            .actions a,
+            .actions button {
+                text-decoration: none;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="shell">
+            <section class="hero">
+                <p class="eyebrow">File Share</p>
+                <h1>文件分享</h1>
+                <p>通过分享链接可直接访问公开文件，无需登录即可下载。</p>
+            </section>
+
+            <section class="card">
+                <h2 id="file-name" class="file-name">正在加载文件信息...</h2>
+                <div id="file-meta" class="meta">请稍候，系统正在读取分享内容。</div>
+                <div id="file-status" class="status">准备分享信息中。</div>
+                <div class="actions">
+                    <a id="download-link" class="link-button" href="#" download style="pointer-events: none; opacity: 0.6;">下载文件</a>
+                    <button id="copy-link-btn" type="button" class="secondary">复制当前分享链接</button>
+                </div>
+            </section>
+        </div>
+
+        <script>
+            (function () {
+                const fileName = document.getElementById("file-name");
+                const fileMeta = document.getElementById("file-meta");
+                const fileStatus = document.getElementById("file-status");
+                const downloadLink = document.getElementById("download-link");
+                const copyLinkBtn = document.getElementById("copy-link-btn");
+                const fileId = new URLSearchParams(window.location.search).get("id");
+
+                function setStatus(message, isError) {
+                    fileStatus.textContent = message;
+                    fileStatus.className = isError ? "status error" : "status";
+                }
+
+                function escapeHtml(value) {
+                    return String(value || "")
+                        .replace(/&/g, "&amp;")
+                        .replace(/</g, "&lt;")
+                        .replace(/>/g, "&gt;")
+                        .replace(/"/g, "&quot;")
+                        .replace(/'/g, "&#39;");
+                }
+
+                async function copyCurrentLink() {
+                    if (navigator.clipboard && navigator.clipboard.writeText) {
+                        await navigator.clipboard.writeText(window.location.href);
+                        return;
+                    }
+                    const input = document.createElement("input");
+                    input.value = window.location.href;
+                    document.body.appendChild(input);
+                    input.select();
+                    document.execCommand("copy");
+                    input.remove();
+                }
+
+                async function loadFile() {
+                    if (!fileId) {
+                        fileName.textContent = "分享链接不可用";
+                        fileMeta.textContent = "当前链接缺少文件标识，请重新生成分享链接。";
+                        setStatus("未检测到有效的分享参数。", true);
+                        return;
+                    }
+
+                    try {
+                        const response = await fetch("/api/files/public/" + encodeURIComponent(fileId));
+                        const text = await response.text();
+                        const data = text ? JSON.parse(text) : {};
+                        if (!response.ok || !data.file) {
+                            throw new Error(data.message || ("HTTP " + response.status));
+                        }
+
+                        const file = data.file;
+                        document.title = "Atlas WebServer | " + file.filename;
+                        fileName.textContent = file.filename;
+                        fileMeta.innerHTML =
+                            "上传者: " + escapeHtml(file.owner) +
+                            "<br>类型: " + escapeHtml(file.content_type) +
+                            "<br>大小: " + file.size + " bytes" +
+                            "<br>文件 ID: #" + file.id;
+                        downloadLink.href = file.download_url;
+                        downloadLink.download = file.filename || ("file-" + file.id);
+                        downloadLink.style.pointerEvents = "auto";
+                        downloadLink.style.opacity = "1";
+                        setStatus("分享内容已就绪，可直接下载。", false);
+                    } catch (error) {
+                        fileName.textContent = "文件暂不可访问";
+                        fileMeta.textContent = "该分享内容可能已被设为私有、删除，或链接信息无效。";
+                        setStatus("分享内容加载未完成: " + error.message, true);
+                    }
+                }
+
+                copyLinkBtn.addEventListener("click", function () {
+                    copyCurrentLink()
+                        .then(function () {
+                            setStatus("当前分享链接已复制。", false);
+                        })
+                        .catch(function () {
+                            setStatus("分享链接复制未完成，请稍后重试。", true);
+                        });
+                });
+
+                loadFile();
+            })();
+        </script>
+    </body>
+</html>

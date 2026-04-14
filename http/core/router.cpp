@@ -289,6 +289,8 @@ HttpConnection::HTTP_CODE HttpConnection::handle_api_request()
         const char *suffix = m_url + strlen("/api/files/public/");
         if (m_method == GET && strstr(suffix, "/download") != nullptr)
             return handle_public_file_download(suffix);
+        if (m_method == GET)
+            return handle_public_file_detail(suffix);
     }
 
     set_memory_response(404, "Not Found", "{\"code\":404,\"message\":\"api not found\"}", "application/json");

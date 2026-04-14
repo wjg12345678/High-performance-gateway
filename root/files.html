@@ -248,7 +248,7 @@
                         <div class="toolbar section-copy">
                             <div>
                                 <h3 class="toolbar-title">文件列表</h3>
-                                <div class="mini">这里展示当前账号的文件，可执行下载、删除与公开范围设置。</div>
+                                <div class="mini">这里展示当前账号的文件，可执行下载、删除、公开范围设置与分享链接复制。</div>
                             </div>
                             <div class="row" style="min-width: 260px;">
                                 <button type="button" id="refresh-files-btn" class="ghost">刷新文件</button>
@@ -367,9 +367,10 @@
                                     '<div class="file-name">' + escapeHtml(file.filename) + '</div>' +
                                     '<div class="mini">#' + file.id + '</div>' +
                                 '</div>' +
-                                '<div class="meta">类型: ' + escapeHtml(file.content_type) + '<br>大小: ' + file.size + ' bytes<br>创建时间: ' + escapeHtml(file.created_at) + '<br>可见范围: ' + (file.is_public ? '公开' : '仅自己可见') + '</div>' +
+                                '<div class="meta">类型: ' + escapeHtml(file.content_type) + '<br>大小: ' + file.size + ' bytes<br>创建时间: ' + escapeHtml(file.created_at) + '<br>可见范围: ' + (file.is_public ? '公开，可分享' : '仅自己可见') + '</div>' +
                                 '<div class="row" style="margin-top: 14px;">' +
                                     '<button type="button" class="ghost" data-download="' + file.id + '">下载</button>' +
+                                    (file.is_public ? '<button type="button" class="ghost" data-share="' + file.id + '">复制分享链接</button>' : '') +
                                     '<button type="button" class="ghost" data-visibility="' + file.id + '" data-public="' + (file.is_public ? '1' : '0') + '">' + (file.is_public ? '设为私有' : '设为公开') + '</button>' +
                                     '<button type="button" class="ghost" data-delete="' + file.id + '">删除</button>' +
                                 '</div>' +
@@ -393,10 +394,31 @@
                                 '<div class="meta">上传者: ' + escapeHtml(file.owner) + '<br>类型: ' + escapeHtml(file.content_type) + '<br>大小: ' + file.size + ' bytes<br>创建时间: ' + escapeHtml(file.created_at) + '</div>' +
                                 '<div class="row" style="margin-top: 14px;">' +
                                     '<button type="button" class="ghost" data-public-download="' + file.id + '">下载</button>' +
+                                    '<button type="button" class="ghost" data-share="' + file.id + '">复制分享链接</button>' +
                                 '</div>' +
                             '</div>'
                         );
                     }).join("");
+                }
+
+                function buildShareLink(fileId) {
+                    return window.location.origin + "/share.html?id=" + encodeURIComponent(String(fileId));
+                }
+
+                async function copyShareLink(fileId) {
+                    const shareLink = buildShareLink(fileId);
+                    if (navigator.clipboard && navigator.clipboard.writeText) {
+                        await navigator.clipboard.writeText(shareLink);
+                        return shareLink;
+                    }
+
+                    const input = document.createElement("input");
+                    input.value = shareLink;
+                    document.body.appendChild(input);
+                    input.select();
+                    document.execCommand("copy");
+                    input.remove();
+                    return shareLink;
                 }
 
                 function renderLogs(logs) {
@@ -501,8 +523,19 @@
 
                 filesList.addEventListener("click", async function (event) {
                     const downloadId = event.target.getAttribute("data-download");
+                    const shareId = event.target.getAttribute("data-share");
                     const deleteId = event.target.getAttribute("data-delete");
                     const visibilityId = event.target.getAttribute("data-visibility");
+
+                    if (shareId) {
+                        try {
+                            const shareLink = await copyShareLink(shareId);
+                            setStatus("分享链接已复制: " + shareLink, "ok");
+                        } catch (error) {
+                            setStatus("分享链接复制未完成，请稍后重试。", "error");
+                        }
+                        return;
+                    }
 
                     if (downloadId) {
                         if (!state.token) {
@@ -572,6 +605,16 @@
 
                 publicFilesList.addEventListener("click", async function (event) {
                     const publicDownloadId = event.target.getAttribute("data-public-download");
+                    const shareId = event.target.getAttribute("data-share");
+                    if (shareId) {
+                        try {
+                            const shareLink = await copyShareLink(shareId);
+                            setStatus("分享链接已复制: " + shareLink, "ok");
+                        } catch (error) {
+                            setStatus("分享链接复制未完成，请稍后重试。", "error");
+                        }
+                        return;
+                    }
                     if (!publicDownloadId) {
                         return;
                     }

@@ -207,6 +207,7 @@ private:
     HTTP_CODE handle_file_upload();
     HTTP_CODE handle_file_list();
     HTTP_CODE handle_public_file_list();
+    HTTP_CODE handle_public_file_detail(const char *path);
     HTTP_CODE handle_file_download(const char *path);
     HTTP_CODE handle_public_file_download(const char *path);
     HTTP_CODE handle_file_delete(const char *path);

@@ -320,6 +320,50 @@ HttpConnection::HTTP_CODE HttpConnection::handle_public_file_list()
     return MEMORY_REQUEST;
 }
 
+HttpConnection::HTTP_CODE HttpConnection::handle_public_file_detail(const char *path)
+{
+    char *endptr = nullptr;
+    long file_id = strtol(path, &endptr, 10);
+    if (endptr == path || *endptr != '\0')
+    {
+        return BAD_REQUEST;
+    }
+
+    ManagedFileRecord record;
+    if (!http_file_store::fetch_file_record(mysql, file_id, record))
+    {
+        return respond_json_error(404, "Not Found", "file not found");
+    }
+    if (!record.is_public)
+    {
+        return respond_json_error(403, "Forbidden", "file is private");
+    }
+
+    const string disk_path = http_file_helpers::build_file_disk_path(doc_root, record.stored_name);
+    if (!file_exists_at_path(disk_path))
+    {
+        return respond_json_error(404, "Not Found", "file content not found");
+    }
+    struct stat st;
+    const long actual_size = stat(disk_path.c_str(), &st) == 0 ? static_cast<long>(st.st_size) : record.file_size;
+
+    string body = "{\"code\":0,\"file\":{\"id\":";
+    body += to_string(record.file_id);
+    body += ",\"filename\":\"";
+    body += json_escape(record.original_name);
+    body += "\",\"content_type\":\"";
+    body += json_escape(record.content_type);
+    body += "\",\"size\":";
+    body += to_string(actual_size);
+    body += ",\"owner\":\"";
+    body += json_escape(record.owner);
+    body += "\",\"is_public\":true,\"download_url\":\"/api/files/public/";
+    body += to_string(record.file_id);
+    body += "/download\"}}";
+    set_memory_response(200, "OK", body, "application/json");
+    return MEMORY_REQUEST;
+}
+
 HttpConnection::HTTP_CODE HttpConnection::handle_file_download(const char *path)
 {
     HTTP_CODE auth_code = require_user_session("file download requires user session");
