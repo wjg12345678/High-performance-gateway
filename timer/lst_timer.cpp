@@ -1,10 +1,10 @@
 #include "lst_timer.h"
-#include "../http/http_conn.h"
+#include "../http/core/connection.h"
 
 sort_timer_lst::sort_timer_lst()
 {
-    head = NULL;
-    tail = NULL;
+    head = nullptr;
+    tail = nullptr;
 }
 sort_timer_lst::~sort_timer_lst()
 {
@@ -51,8 +51,8 @@ void sort_timer_lst::adjust_timer(util_timer *timer)
     if (timer == head)
     {
         head = head->next;
-        head->prev = NULL;
-        timer->next = NULL;
+        head->prev = nullptr;
+        timer->next = nullptr;
         add_timer(timer, head);
     }
     else
@@ -71,21 +71,21 @@ void sort_timer_lst::del_timer(util_timer *timer)
     if ((timer == head) && (timer == tail))
     {
         delete timer;
-        head = NULL;
-        tail = NULL;
+        head = nullptr;
+        tail = nullptr;
         return;
     }
     if (timer == head)
     {
         head = head->next;
-        head->prev = NULL;
+        head->prev = nullptr;
         delete timer;
         return;
     }
     if (timer == tail)
     {
         tail = tail->prev;
-        tail->next = NULL;
+        tail->next = nullptr;
         delete timer;
         return;
     }
@@ -100,7 +100,7 @@ void sort_timer_lst::tick()
         return;
     }
     
-    time_t cur = time(NULL);
+    time_t cur = time(nullptr);
     util_timer *tmp = head;
     while (tmp)
     {
@@ -112,7 +112,7 @@ void sort_timer_lst::tick()
         head = tmp->next;
         if (head)
         {
-            head->prev = NULL;
+            head->prev = nullptr;
         }
         delete tmp;
         tmp = head;
@@ -140,7 +140,7 @@ void sort_timer_lst::add_timer(util_timer *timer, util_timer *lst_head)
     {
         prev->next = timer;
         timer->prev = prev;
-        timer->next = NULL;
+        timer->next = nullptr;
         tail = timer;
     }
 }
@@ -195,7 +195,7 @@ void Utils::addsig(int sig, void(handler)(int), bool restart)
     if (restart)
         sa.sa_flags |= SA_RESTART;
     sigfillset(&sa.sa_mask);
-    assert(sigaction(sig, &sa, NULL) != -1);
+    assert(sigaction(sig, &sa, nullptr) != -1);
 }
 
 //定时处理任务，重新定时以不断触发SIGALRM信号
@@ -220,5 +220,5 @@ void cb_func(client_data *user_data)
     epoll_ctl(Utils::u_epollfd, EPOLL_CTL_DEL, user_data->sockfd, 0);
     assert(user_data);
     close(user_data->sockfd);
-    http_conn::m_user_count--;
+    HttpConnection::m_user_count--;
 }

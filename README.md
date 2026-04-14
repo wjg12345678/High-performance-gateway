@@ -616,8 +616,6 @@ curl -k https://127.0.0.1:9006/
 - `/register.html`
 - `/log.html`
 - `/welcome.html`
-- `/picture.html`
-- `/video.html`
 - `/files.html`
 
 ### 主要接口

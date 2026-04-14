@@ -19,7 +19,7 @@ string trim(const string &input)
 const char *getenv_value(const char *name)
 {
     const char *value = getenv(name);
-    return (value != NULL && value[0] != '\0') ? value : NULL;
+    return (value != nullptr && value[0] != '\0') ? value : nullptr;
 }
 
 int getenv_int_value(const char *name, int fallback)
@@ -92,7 +92,7 @@ void Config::load_default_file()
 
 void Config::load_file(const char *path)
 {
-    if (path == NULL)
+    if (path == nullptr)
     {
         return;
     }
@@ -172,7 +172,7 @@ void Config::apply_env_overrides()
     threadpool_idle_timeout = getenv_int_value("TWS_THREADPOOL_IDLE_TIMEOUT", threadpool_idle_timeout);
     mysql_idle_timeout = getenv_int_value("TWS_MYSQL_IDLE_TIMEOUT", mysql_idle_timeout);
 
-    const char *value = NULL;
+    const char *value = nullptr;
     value = getenv_value("TWS_PID_FILE");
     if (value) pid_file = value;
     value = getenv_value("TWS_HTTPS_CERT_FILE");

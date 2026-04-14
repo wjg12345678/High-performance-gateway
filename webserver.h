@@ -13,13 +13,15 @@
 #include <sys/epoll.h>
 #include <sys/eventfd.h>
 #include <pthread.h>
+#include <string>
+#include <memory>
 #include <vector>
 #include <deque>
 #include <signal.h>
 #include <openssl/ssl.h>
 
 #include "./threadpool/threadpool.h"
-#include "./http/http_conn.h"
+#include "./http/core/connection.h"
 #include "./timer/lst_timer.h"
 #include "./timer/heap_timer.h"
 
@@ -92,7 +94,7 @@ public:
 public:
     //基础
     int m_port;
-    char *m_root;
+    std::string m_root;
     int m_log_write;
     int m_log_level;
     int m_log_split_lines;
@@ -106,8 +108,8 @@ public:
     SSL_CTX *m_ssl_ctx;
 
     int m_epollfd;
-    http_conn *users;
-    sockaddr_in *m_pending_addresses;
+    std::vector<HttpConnection> users;
+    std::vector<sockaddr_in> m_pending_addresses;
 
     //数据库相关
     connection_pool *m_connPool;
@@ -120,7 +122,7 @@ public:
     int m_mysql_idle_timeout;
 
     //线程池相关
-    threadpool<http_conn> *m_pool;
+    std::unique_ptr<threadpool<HttpConnection>> m_pool;
     int m_thread_num;
     int m_threadpool_max_threads;
     int m_threadpool_idle_timeout;

@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Atlas WebServer Login</title>
+        <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+        <link rel="stylesheet" href="./atlas.css">
+        <style>
+            .hint.error {
+                color: #a55722;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="shell">
+            <section class="grid two">
+                <article class="hero">
+                    <p class="eyebrow">Sign In</p>
+                    <h1>登录 Atlas WebServer</h1>
+                    <p>登录后可进入统一控制台，继续访问照片、视频和文件管理台。文件管理页会直接复用当前登录态。</p>
+                    <div class="center-actions">
+                        <a class="link-button secondary" href="./register.html">去注册</a>
+                        <a class="link-button secondary" href="./index.html">返回入口</a>
+                    </div>
+                </article>
+
+                <article class="card">
+                    <p class="kicker">Account Access</p>
+                    <h2>账号登录</h2>
+                    <form id="login-form" class="stack" action="2CGISQL.cgi" method="post">
+                        <div>
+                            <label for="login-user">用户名</label>
+                            <input id="login-user" type="text" name="user" placeholder="请输入用户名" required="required">
+                        </div>
+                        <div>
+                            <label for="login-password">登录密码</label>
+                            <input id="login-password" type="password" name="password" placeholder="请输入密码" required="required">
+                        </div>
+                        <button type="submit">登录并进入控制台</button>
+                    </form>
+                    <div id="login-status" class="hint">支持页面登录流程，也支持调用 `/api/login` 进行接口验证。</div>
+                </article>
+            </section>
+        </div>
+        <script>
+            (function () {
+                const form = document.getElementById("login-form");
+                const status = document.getElementById("login-status");
+                const usernameInput = document.getElementById("login-user");
+                const passwordInput = document.getElementById("login-password");
+
+                function setStatus(message, isError) {
+                    status.textContent = message;
+                    status.className = isError ? "hint error" : "hint";
+                }
+
+                form.addEventListener("submit", async function (event) {
+                    event.preventDefault();
+
+                    const username = usernameInput.value.trim();
+                    const password = passwordInput.value;
+                    if (!username || !password) {
+                        setStatus("用户名和密码不能为空。", true);
+                        return;
+                    }
+
+                    setStatus("正在登录...", false);
+
+                    try {
+                        const response = await fetch("/api/login", {
+                            method: "POST",
+                            headers: {
+                                "Content-Type": "application/json"
+                            },
+                            body: JSON.stringify({
+                                username: username,
+                                passwd: password
+                            })
+                        });
+                        const text = await response.text();
+                        let data = {};
+                        try {
+                            data = text ? JSON.parse(text) : {};
+                        } catch (error) {
+                            throw new Error("服务返回了非 JSON 响应");
+                        }
+
+                        if (!response.ok || !data.token) {
+                            throw new Error(data.message || ("HTTP " + response.status));
+                        }
+
+                        localStorage.setItem("tws_demo_token", data.token);
+                        localStorage.setItem("tws_demo_user", username);
+                        window.location.href = data.target || "/welcome.html";
+                    } catch (error) {
+                        setStatus("登录失败: " + error.message, true);
+                    }
+                });
+            })();
+        </script>
+    </body>
+</html>

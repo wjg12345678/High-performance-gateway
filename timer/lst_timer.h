@@ -36,7 +36,7 @@ struct client_data
 class util_timer
 {
 public:
-    util_timer() : prev(NULL), next(NULL) {}
+    util_timer() : prev(nullptr), next(nullptr) {}
 
 public:
     time_t expire;

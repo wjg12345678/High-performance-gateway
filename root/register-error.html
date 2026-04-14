@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Atlas WebServer Register</title>
+        <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+        <link rel="stylesheet" href="./atlas.css">
+    </head>
+    <body>
+        <div class="shell">
+            <section class="grid two">
+                <article class="hero">
+                    <p class="eyebrow">Create Account</p>
+                    <h1>注册未通过</h1>
+                    <p>该用户名已被占用。你可以更换用户名重新提交，或者返回登录页使用已有账号进入系统。</p>
+                    <div class="center-actions">
+                        <a class="link-button secondary" href="./login.html">去登录</a>
+                        <a class="link-button secondary" href="./index.html">返回入口</a>
+                    </div>
+                </article>
+
+                <article class="card">
+                    <p class="kicker">Retry</p>
+                    <h2>重新注册</h2>
+                    <form class="stack" action="3CGISQL.cgi" method="post">
+                        <div>
+                            <label for="register-user">用户名</label>
+                            <input id="register-user" type="text" name="user" placeholder="请设置新的用户名" required="required">
+                        </div>
+                        <div>
+                            <label for="register-password">用户密码</label>
+                            <input id="register-password" type="password" name="password" placeholder="请设置密码" required="required">
+                        </div>
+                        <button type="submit">再次注册</button>
+                    </form>
+                    <div class="notice error">提示：该用户名已被注册，请更换后重试。</div>
+                </article>
+            </section>
+        </div>
+    </body>
+</html>

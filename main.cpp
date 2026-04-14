@@ -205,9 +205,9 @@ void install_supervisor_signal_handlers()
     sa.sa_handler = supervisor_signal_handler;
     sigemptyset(&sa.sa_mask);
 
-    sigaction(SIGTERM, &sa, NULL);
-    sigaction(SIGINT, &sa, NULL);
-    sigaction(SIGHUP, &sa, NULL);
+    sigaction(SIGTERM, &sa, nullptr);
+    sigaction(SIGINT, &sa, nullptr);
+    sigaction(SIGHUP, &sa, nullptr);
 
     signal(SIGPIPE, SIG_IGN);
 }
@@ -219,9 +219,9 @@ void install_worker_signal_handlers()
     term_action.sa_handler = worker_term_handler;
     sigemptyset(&term_action.sa_mask);
 
-    sigaction(SIGTERM, &term_action, NULL);
-    sigaction(SIGINT, &term_action, NULL);
-    sigaction(SIGHUP, &term_action, NULL);
+    sigaction(SIGTERM, &term_action, nullptr);
+    sigaction(SIGINT, &term_action, nullptr);
+    sigaction(SIGHUP, &term_action, nullptr);
 
     struct sigaction fatal_action;
     memset(&fatal_action, 0, sizeof(fatal_action));
@@ -229,11 +229,11 @@ void install_worker_signal_handlers()
     sigemptyset(&fatal_action.sa_mask);
     fatal_action.sa_flags = SA_RESETHAND;
 
-    sigaction(SIGSEGV, &fatal_action, NULL);
-    sigaction(SIGABRT, &fatal_action, NULL);
-    sigaction(SIGBUS, &fatal_action, NULL);
-    sigaction(SIGFPE, &fatal_action, NULL);
-    sigaction(SIGILL, &fatal_action, NULL);
+    sigaction(SIGSEGV, &fatal_action, nullptr);
+    sigaction(SIGABRT, &fatal_action, nullptr);
+    sigaction(SIGBUS, &fatal_action, nullptr);
+    sigaction(SIGFPE, &fatal_action, nullptr);
+    sigaction(SIGILL, &fatal_action, nullptr);
 
     signal(SIGPIPE, SIG_IGN);
 }
@@ -390,7 +390,7 @@ int run_daemon_supervisor(const Config &config)
             }
         }
 
-        time_t now = time(NULL);
+        time_t now = time(nullptr);
         if (window_start == 0 || now - window_start > DAEMON_RESTART_WINDOW_SECONDS)
         {
             window_start = now;

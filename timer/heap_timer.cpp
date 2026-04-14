@@ -4,7 +4,7 @@
 
 void HeapTimer::add_or_update(int sockfd, int timeout)
 {
-    const time_t expire = time(NULL) + timeout;
+    const time_t expire = time(nullptr) + timeout;
     std::unordered_map<int, size_t>::iterator it = m_index.find(sockfd);
     if (it == m_index.end())
     {
@@ -40,7 +40,7 @@ void HeapTimer::tick(const std::function<void(int)> &on_expire)
         return;
     }
 
-    const time_t now = time(NULL);
+    const time_t now = time(nullptr);
     while (!m_heap.empty())
     {
         const TimerNode &node = m_heap.front();
@@ -62,7 +62,7 @@ int HeapTimer::get_next_timeout_ms() const
         return -1;
     }
 
-    const time_t now = time(NULL);
+    const time_t now = time(nullptr);
     if (m_heap.front().expire <= now)
     {
         return 0;
