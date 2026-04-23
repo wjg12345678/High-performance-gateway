@@ -11,6 +11,11 @@ using namespace std;
 
 void modfd(int epollfd, int fd, int ev, int TRIGMode);
 
+namespace
+{
+constexpr int ET_READ_EVENT_MAX_RECVS = 64;
+}
+
 void HttpConnection::reset_ring_buffer(ring_buffer &ring, char *storage, int capacity)
 {
     ring.buffer = storage;
@@ -437,6 +442,7 @@ bool HttpConnection::read_once_et()
 {
     m_has_new_data = false;
     bool has_read = false;
+    int recvs_this_event = 0;
 
     while (ring_writable(m_read_ring) > 0)
     {
@@ -445,6 +451,14 @@ bool HttpConnection::read_once_et()
         {
             has_read = true;
             m_has_new_data = true;
+            ++recvs_this_event;
+            if (recvs_this_event >= ET_READ_EVENT_MAX_RECVS)
+            {
+                sync_read_buffer();
+                refresh_active();
+                modfd(m_epollfd, m_sockfd, wait_event_for_io(EPOLLIN), m_TRIGMode);
+                return true;
+            }
             continue;
         }
 
