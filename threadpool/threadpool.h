@@ -16,46 +16,25 @@ template <typename T>
 class threadpool
 {
 public:
-    enum task_priority
-    {
-        LOW = 0,
-        NORMAL = 1,
-        HIGH = 2
-    };
-
     /*thread_number是线程池初始线程数，max_requests是请求队列最大长度*/
     threadpool(int actor_model, connection_pool *connPool, int thread_number = 8, int max_request = 10000,
                int max_thread_number = 0, int idle_timeout = 30);
     ~threadpool();
 
-    bool append(T *request, int state, task_priority priority = NORMAL);
-    bool append_p(T *request, task_priority priority = NORMAL);
+    bool append(T *request, int state);
+    bool append_p(T *request);
 
 private:
     struct task
     {
         T *request;
         int state;
-        task_priority priority;
-        unsigned long long sequence;
         bool use_state;
-    };
-
-    struct task_compare
-    {
-        bool operator()(const task &lhs, const task &rhs) const
-        {
-            if (lhs.priority != rhs.priority)
-            {
-                return lhs.priority < rhs.priority;
-            }
-            return lhs.sequence > rhs.sequence;
-        }
     };
 
     static void *worker(void *arg);
     void run();
-    bool enqueue(T *request, int state, bool use_state, task_priority priority);
+    bool enqueue(T *request, int state, bool use_state);
     bool spawn_worker_unlocked();
     void maybe_grow_unlocked();
     void execute(task &current_task);
@@ -69,9 +48,8 @@ private:
     int m_idle_timeout;
     int m_max_requests;
     bool m_stop;
-    unsigned long long m_sequence;
     std::vector<pthread_t> m_threads;
-    std::priority_queue<task, std::vector<task>, task_compare> m_workqueue;
+    std::queue<task> m_workqueue;
     locker m_queuelocker;
     cond m_queuecond;
     connection_pool *m_connPool;
@@ -88,7 +66,6 @@ threadpool<T>::threadpool(int actor_model, connection_pool *connPool, int thread
       m_idle_timeout(idle_timeout > 0 ? idle_timeout : 30),
       m_max_requests(max_requests),
       m_stop(false),
-      m_sequence(0),
       m_connPool(connPool),
       m_actor_model(actor_model)
 {
@@ -131,19 +108,19 @@ threadpool<T>::~threadpool()
 }
 
 template <typename T>
-bool threadpool<T>::append(T *request, int state, task_priority priority)
+bool threadpool<T>::append(T *request, int state)
 {
-    return enqueue(request, state, true, priority);
+    return enqueue(request, state, true);
 }
 
 template <typename T>
-bool threadpool<T>::append_p(T *request, task_priority priority)
+bool threadpool<T>::append_p(T *request)
 {
-    return enqueue(request, 0, false, priority);
+    return enqueue(request, 0, false);
 }
 
 template <typename T>
-bool threadpool<T>::enqueue(T *request, int state, bool use_state, task_priority priority)
+bool threadpool<T>::enqueue(T *request, int state, bool use_state)
 {
     m_queuelocker.lock();
     if (m_stop || (int)m_workqueue.size() >= m_max_requests)
@@ -155,8 +132,6 @@ bool threadpool<T>::enqueue(T *request, int state, bool use_state, task_priority
     task current_task;
     current_task.request = request;
     current_task.state = state;
-    current_task.priority = priority;
-    current_task.sequence = m_sequence++;
     current_task.use_state = use_state;
 
     m_workqueue.push(current_task);
@@ -244,7 +219,7 @@ void threadpool<T>::run()
             return;
         }
 
-        task current_task = m_workqueue.top();
+        task current_task = m_workqueue.front();
         m_workqueue.pop();
         ++m_busy_thread_number;
         m_queuelocker.unlock();
