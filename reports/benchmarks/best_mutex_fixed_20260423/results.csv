@@ -1,0 +1,19 @@
+endpoint,method,concurrency,duration,threads,request_size_bytes,db_hit,https,requests_per_sec,latency_avg_ms,latency_p50_ms,latency_p90_ms,latency_p95_ms,latency_p99_ms,transfer_per_sec_mb,errors,web_cpu_peak,web_mem_peak,mysql_cpu_peak,mysql_mem_peak
+healthz,GET,100,15s,4,0,0,0,10461.68,20.56ms,8.41ms,15.37ms,NA,564.76ms,1.88MB,"connect 0, read 0, write 0, timeout 20",476.66,119.7,14.67,437
+static_index,GET,100,15s,4,0,0,0,6549.32,16.95ms,14.41ms,21.73ms,NA,50.65ms,12.91MB,"none",415.34,119.7,14.16,437
+login,POST,100,15s,4,48,1,0,988.30,102.36ms,97.24ms,113.78ms,NA,161.76ms,203.64KB,"none",119.25,118.6,178.62,442
+private_ping,GET,100,15s,4,0,1,0,8336.97,15.83ms,10.76ms,20.79ms,NA,69.31ms,1.70MB,"none",524.76,121,39.87,441.6
+private_files,GET,100,15s,4,0,1,0,5356.82,20.52ms,16.34ms,31.11ms,NA,81.27ms,0.95MB,"none",536.03,120.5,489.04,441.8
+private_upload,POST,100,15s,4,101,1,0,350.47,284.90ms,255.02ms,369.32ms,NA,654.96ms,94.05KB,"none",71.34,122.1,140.4,443.9
+healthz,GET,200,15s,4,0,0,0,7325.45,25.39ms,14.71ms,31.33ms,NA,391.32ms,1.31MB,"connect 0, read 1929, write 0, timeout 117",418.58,123.2,10.72,445.3
+static_index,GET,200,15s,4,0,0,0,4912.58,43.37ms,36.19ms,67.78ms,NA,134.75ms,9.69MB,"connect 0, read 50, write 0, timeout 0",356.55,125.7,30.23,445.3
+login,POST,200,15s,4,48,1,0,883.74,230.50ms,218.35ms,247.44ms,NA,596.91ms,182.10KB,"connect 0, read 20, write 0, timeout 0",106.76,124.2,183.45,449.3
+private_ping,GET,200,15s,4,0,1,0,7714.78,38.94ms,19.69ms,40.05ms,NA,731.46ms,1.57MB,"connect 0, read 1995, write 0, timeout 96",483.41,125.9,14.88,449.1
+private_files,GET,200,15s,4,0,1,0,2605.79,83.89ms,72.69ms,86.41ms,NA,370.71ms,18.98MB,"connect 0, read 48, write 0, timeout 1",572.74,127.1,421.26,450.3
+private_upload,POST,200,15s,4,101,1,0,376.89,522.31ms,524.81ms,609.60ms,NA,658.29ms,101.28KB,"connect 0, read 44, write 0, timeout 0",76.34,130,155.23,450.1
+healthz,GET,500,15s,4,0,0,0,8368.53,56.15ms,39.56ms,74.24ms,NA,693.60ms,1.50MB,"connect 0, read 2339, write 0, timeout 260",439.44,140.2,18.33,449.4
+static_index,GET,500,15s,4,0,0,0,6061.33,88.11ms,79.87ms,103.91ms,NA,368.92ms,11.96MB,"connect 0, read 648, write 0, timeout 1",401.83,144.8,21.45,449.3
+login,POST,500,15s,4,48,1,0,726.94,669.11ms,670.66ms,724.59ms,NA,1.01s,149.79KB,"connect 0, read 553, write 0, timeout 14",105.31,142,195.96,452.9
+private_ping,GET,500,15s,4,0,1,0,9620.54,50.11ms,40.24ms,58.87ms,NA,544.13ms,1.96MB,"connect 0, read 3821, write 0, timeout 264",510.3,144.4,20.52,452.6
+private_files,GET,500,15s,4,0,1,0,2319.48,213.73ms,206.70ms,239.02ms,NA,470.38ms,17.00MB,"connect 0, read 620, write 0, timeout 30",524.37,146.8,457.26,453.8
+private_upload,POST,500,15s,4,101,1,0,303.31,1.54s,1.57s,1.80s,NA,1.88s,81.75KB,"connect 0, read 580, write 0, timeout 69",84.71,150,140.45,455.9

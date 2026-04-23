@@ -1,0 +1,14 @@
+Running 15s test @ http://127.0.0.1:9006/api/private/files
+  4 threads and 200 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency    27.50ms   65.66ms   1.05s    98.77%
+    Req/Sec     1.90k   395.83     2.89k    76.50%
+  Latency Distribution
+     50%   21.56ms
+     75%   24.75ms
+     90%   28.50ms
+     99%  211.51ms
+  113582 requests in 15.08s, 20.04MB read
+  Socket errors: connect 0, read 22, write 0, timeout 105
+Requests/sec:   7531.85
+Transfer/sec:      1.33MB
