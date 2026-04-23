@@ -225,6 +225,42 @@ curl -i http://127.0.0.1:9006/
 - [docs/perf-flamegraph.md](docs/perf-flamegraph.md)：`perf + FlameGraph` 使用说明
 - [reports/](reports/)：压测和采样产物
 
+### 最佳配置压测快照
+
+2026 年 4 月 23 日使用当前最佳默认方案做了一轮完整压测：
+
+- 线程池：`TWS_THREADPOOL_QUEUE_MODE=mutex`
+- 线程数：`TWS_THREAD_NUM=8`，`TWS_THREADPOOL_MAX_THREADS=8`
+- 日志：`TWS_LOG_WRITE=1`
+- epoll：`trig_mode=3`，即 `ET/ET`
+- 压测工具：`wrk -t4 -d15s`
+- 结果文件：`reports/benchmarks/best_mutex_fixed_20260423/results.csv`
+
+注意：这轮压测期间 `web` 容器发生 4 次重启，日志出现 `server received SIGSEGV`。因此该数据只适合作为“当前最佳配置下的非稳定压测快照”，不能作为 release benchmark 或稳定版最终成绩。
+
+| 接口 | 并发 | 早期 Req/s | 本次 Req/s | 变化 |
+| --- | ---: | ---: | ---: | ---: |
+| `/healthz` | 100 | 6898.92 | 10461.68 | +51.6% |
+| `/healthz` | 200 | 5016.87 | 7325.45 | +46.0% |
+| `/healthz` | 500 | 4476.61 | 8368.53 | +86.9% |
+| `/` | 100 | 5165.27 | 6549.32 | +26.8% |
+| `/` | 200 | 4299.95 | 4912.58 | +14.2% |
+| `/` | 500 | 4851.51 | 6061.33 | +24.9% |
+| `/api/private/ping` | 100 | 6654.09 | 8336.97 | +25.3% |
+| `/api/private/ping` | 200 | 4678.28 | 7714.78 | +64.9% |
+| `/api/private/ping` | 500 | 5077.29 | 9620.54 | +89.5% |
+| `/api/login` | 100 | 875.10 | 988.30 | +12.9% |
+| `/api/login` | 200 | 491.31 | 883.74 | +79.9% |
+| `/api/login` | 500 | 426.50 | 726.94 | +70.4% |
+| `/api/private/files` | 100 | 2196.76 | 5356.82 | +143.9% |
+| `/api/private/files` | 200 | 3103.96 | 2605.79 | -16.0% |
+| `/api/private/files` | 500 | 2173.21 | 2319.48 | +6.7% |
+| `/api/private/files POST` | 100 | 330.92 | 350.47 | +5.9% |
+| `/api/private/files POST` | 200 | 394.72 | 376.89 | -4.5% |
+| `/api/private/files POST` | 500 | 320.38 | 303.31 | -5.3% |
+
+结论：轻量读接口整体明显提升，`/healthz`、`/api/private/ping`、`/api/login` 提升最大；文件列表在 `c=100` 提升明显，但 `c=200` 退化；上传接口基本没有改善，`200/500` 并发略降。由于压测期间发生 `SIGSEGV`，下一步应优先定位崩溃，再继续讨论吞吐优化。
+
 说明：性能数据受机器、Docker 资源、日志模式、线程池参数、数据库状态影响明显，跨环境对比前应重新采集。
 
 ## 运维说明
