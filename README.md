@@ -1,7 +1,5 @@
 # Atlas WebServer
 
-![Atlas WebServer Cover](docs/cover-banner.svg)
-
 ![C++](https://img.shields.io/badge/C%2B%2B-11%2F17-blue)
 ![Platform](https://img.shields.io/badge/Platform-Linux%20%2B%20Docker-0f766e)
 ![Protocol](https://img.shields.io/badge/Protocol-HTTP%2F1.1%20%2B%20HTTPS-b45309)
@@ -9,27 +7,6 @@
 ![Status](https://img.shields.io/badge/Status-Active%20Project-15803d)
 
 Atlas WebServer 是一个基于 C++、Linux `epoll` 和 MySQL 的工程化 Web 服务，提供完整的 HTTP 服务栈、鉴权能力、文件管理能力、操作审计、容器化部署、脚本化验证和基准测试材料。
-
-## 目录
-
-- [项目简介](#项目简介)
-- [核心能力](#核心能力)
-- [系统架构](#系统架构)
-- [启动流程](#启动流程)
-- [并发模型](#并发模型)
-- [模块划分](#模块划分)
-- [仓库结构](#仓库结构)
-- [快速开始](#快速开始)
-- [配置说明](#配置说明)
-- [接口总览](#接口总览)
-- [接口说明](#接口说明)
-- [文件业务说明](#文件业务说明)
-- [请求时序](#请求时序)
-- [测试验证](#测试验证)
-- [性能数据](#性能数据)
-- [运维说明](#运维说明)
-- [文档索引](#文档索引)
-- [许可证](#许可证)
 
 ## 项目简介
 
@@ -55,45 +32,24 @@ Atlas WebServer 运行于 Linux 网络编程模型之上，核心采用 `Main Re
 
 ## 系统架构
 
-![Architecture Overview](docs/architecture-overview.svg)
-
 ```mermaid
 flowchart LR
-    Client[Browser / API Client / wrk]
+    Client[Client]
     Main[Main Reactor]
     Sub[SubReactors]
-    Pool[Dynamic Thread Pool]
-    HTTP[HTTP Core / API / File Service]
+    Pool[Thread Pool]
+    App[HTTP Core + API + File Service]
     DB[(MySQL)]
     FS[(root/uploads)]
-    Log[Logger]
 
-    Client --> Main
-    Main --> Sub
-    Sub --> Pool
-    Pool --> HTTP
-    HTTP --> DB
-    HTTP --> FS
-    HTTP --> Log
+    Client --> Main --> Sub --> Pool --> App
+    App --> DB
+    App --> FS
 ```
 
 系统运行时由接入层、连接事件层、线程池执行层、HTTP 处理层、数据库层、文件存储层和日志层组成。主线程负责监听与分发，新连接被轮询分配给不同的 SubReactor，读写事件再被投递到线程池进行解析、鉴权、路由和业务处理。
 
 ## 启动流程
-
-```mermaid
-flowchart TD
-    A[main.cpp] --> B[读取 server.conf / 环境变量]
-    B --> C[WebServer::init]
-    C --> D[log_write]
-    D --> E[tls_init]
-    E --> F[sql_pool]
-    F --> G[thread_pool]
-    G --> H[trig_mode]
-    H --> I[eventListen]
-    I --> J[init_sub_reactors]
-    J --> K[eventLoop]
-```
 
 启动阶段主要完成以下初始化动作：
 
@@ -109,106 +65,31 @@ flowchart TD
 
 ## 并发模型
 
-### 主从 Reactor 协作
-
 ```mermaid
 flowchart LR
     L[listenfd]
     M[Main Reactor]
-    R1[SubReactor]
-    R2[SubReactor]
-    EFD[eventfd notify]
-    TQ[Task Queue]
+    S[SubReactor]
+    P[Thread Pool]
+    H[http_conn::process]
 
     L --> M
-    M -->|accept| M
-    M -->|round-robin dispatch| EFD
-    EFD --> R1
-    EFD --> R2
-    R1 -->|EPOLLIN/EPOLLOUT| TQ
-    R2 -->|EPOLLIN/EPOLLOUT| TQ
+    M -->|accept + dispatch| S
+    S -->|EPOLLIN / EPOLLOUT| P
+    P --> H
+    H -->|response ready| S
 ```
 
 - 主 Reactor 只处理 `listenfd`
 - 新连接通过轮询分发到不同 SubReactor
 - SubReactor 维护连接读写事件和超时堆
 - 业务处理统一交给线程池，避免 Reactor 线程执行耗时逻辑
-
-### 线程池与数据库协作
-
-```mermaid
-flowchart TD
-    EP[SubReactor read/write event]
-    TP[threadpool::append_p]
-    W[Worker Thread]
-    RAII[connectionRAII]
-    HP[http_conn::process]
-    DB[(MySQL)]
-
-    EP --> TP
-    TP --> W
-    W --> RAII
-    RAII --> DB
-    W --> HP
-    HP --> DB
-```
-
 - SubReactor 在收到 `EPOLLIN` 后将连接对象投递给线程池
 - 工作线程通过 `connectionRAII` 临时获取数据库连接
 - `http_conn::process()` 完成请求解析、鉴权、路由、数据库访问和响应拼装
+- 每次 I/O 后刷新连接活跃时间，SubReactor 周期性扫描最小堆回收空闲连接
 
-### 超时回收
-
-```mermaid
-flowchart LR
-    IO[读写事件]
-    Refresh[refresh_timer]
-    Heap[HeapTimer]
-    Tick[scan_timeout]
-    Close[close_conn]
-
-    IO --> Refresh
-    Refresh --> Heap
-    Heap --> Tick
-    Tick -->|expired| Close
-```
-
-- 每次 I/O 事件后刷新连接活跃时间
-- SubReactor 周期性扫描最小堆
-- 过期连接主动关闭，释放 fd 和相关资源
-
-## 模块划分
-
-### HTTP 模块
-
-- `http/core/connection.cpp`：连接编排、生命周期管理、核心入口
-- `http/core/router.cpp`：路由分发、静态资源入口、API 映射
-- `http/core/parser.cpp`：请求行、请求头、请求体解析
-- `http/core/io.cpp`：socket 收发、环形缓冲区、TLS 读写
-- `http/core/response.cpp`：响应头和响应体构造
-- `http/core/runtime.cpp`：`process()` 与 `write()` 生命周期调度
-- `http/core/utils.cpp`：URL 解码、SQL 转义、JSON 辅助
-
-### 业务模块
-
-- `http/api/auth.cpp`：注册、登录、登出
-- `http/api/auth_session.cpp`：会话持久化、Bearer Token 校验
-- `http/api/operation_service.cpp`：操作日志查询与删除
-- `http/files/file_service.cpp`：文件上传、列表、下载、删除、公开可见性切换
-- `http/files/file_helpers.cpp`：文件路径、文件名、下载名编码处理
-- `http/files/file_store.cpp`：文件记录查询与持久化辅助
-
-### 基础设施模块
-
-- `threadpool/`：动态线程池
-- `timer/`：基于最小堆的连接超时管理
-- `CGImysql/`：MySQL 连接池与 RAII 封装
-- `log/`：同步/异步日志系统
-- `lock/`：信号量、互斥锁、条件变量封装
-- `memorypool/`：内存池
-- `root/`：静态页面资源和上传目录
-
-## 仓库结构
+## 代码结构
 
 ```text
 .
@@ -231,6 +112,15 @@ flowchart LR
 |   `-- test_files.sh
 `-- docs/
 ```
+
+关键目录说明：
+
+- `http/core/`：HTTP 解析、路由、读写与响应封装
+- `http/api/`：认证、会话与操作日志
+- `http/files/`：文件上传、下载、列表与元数据管理
+- `threadpool/`、`timer/`、`CGImysql/`：线程池、超时管理与数据库连接池
+- `root/`：静态页面资源和上传目录
+- `docs/`：架构、接口、性能和时序等补充文档
 
 ## 快速开始
 
@@ -306,43 +196,7 @@ export TWS_DB_NAME=qgydb
 | `mysql_idle_timeout` / `TWS_MYSQL_IDLE_TIMEOUT` | `60` | MySQL 连接空闲回收秒数 |
 | `pid_file` / `TWS_PID_FILE` | `./atlas-webserver.pid` | PID 文件路径 |
 
-## 接口总览
-
-### 公共接口
-
-- `GET /healthz`
-- `GET /`
-- `POST /api/register`
-- `POST /api/login`
-- `GET /api/files/public`
-- `GET /api/files/public/:id`
-- `GET /api/files/public/:id/download`
-
-### 私有接口
-
-以下接口需要 `Authorization: Bearer <token>`：
-
-- `GET /api/private/ping`
-- `POST /api/private/logout`
-- `GET /api/private/operations`
-- `DELETE /api/private/operations/:id`
-- `GET /api/private/files`
-- `POST /api/private/files`
-- `GET /api/private/files/:id/download`
-- `POST /api/private/files/:id/visibility`
-- `DELETE /api/private/files/:id`
-
-### 页面入口
-
-- `GET /`
-- `GET /index.html`
-- `GET /login.html`
-- `GET /register.html`
-- `GET /welcome.html`
-- `GET /files.html`
-- `GET /share.html`
-
-## 接口说明
+## API 概览
 
 ### 通用约定
 
@@ -352,260 +206,23 @@ export TWS_DB_NAME=qgydb
 - 成功响应通常返回 `{"code":0,...}`
 - 错误响应通常返回 `{"code":<http_status>,"message":"..."}`
 
-### 健康检查
-
-#### `GET /healthz`
-
-用于探活与健康检查。
-
-示例响应：
-
-```json
-{"code":0,"message":"ok"}
-```
-
-### 认证接口
-
-#### `POST /api/register`
-
-注册用户。
-
-请求体：
-
-```json
-{
-  "username": "demo",
-  "password": "secret"
-}
-```
-
-兼容字段：
-
-- `username` / `user`
-- `password` / `passwd`
-
-成功响应：
-
-```json
-{"code":0,"message":"register success"}
-```
-
-#### `POST /api/login`
-
-用户登录并获取会话 Token。
-
-请求体：
-
-```json
-{
-  "username": "demo",
-  "password": "secret"
-}
-```
-
-成功响应：
-
-```json
-{
-  "code": 0,
-  "message": "login success",
-  "target": "/welcome.html",
-  "token": "token-string",
-  "expires_in": 604800
-}
-```
-
-#### `POST /api/private/logout`
-
-使当前 Bearer Token 失效。
-
-请求头：
-
-```text
-Authorization: Bearer <token>
-```
-
-成功响应：
-
-```json
-{"code":0,"message":"logout success"}
-```
-
-### 私有接口
-
-#### `GET /api/private/ping`
-
-私有轻量探活接口。
-
-#### `GET /api/private/operations`
-
-返回当前用户最近 `50` 条操作记录。
-
-示例响应：
-
-```json
-{
-  "code": 0,
-  "operations": [
-    {
-      "id": 1,
-      "action": "login",
-      "resource_type": "user",
-      "resource_id": 0,
-      "detail": "login success",
-      "created_at": "2026-04-16 14:00:00"
-    }
-  ]
-}
-```
-
-#### `DELETE /api/private/operations/:id`
-
-删除当前用户的一条操作日志。
-
-成功响应：
-
-```json
-{"code":0,"message":"delete success"}
-```
-
-### 文件接口
-
-#### `GET /api/private/files`
-
-返回当前用户最近 `50` 条文件记录。
-
-示例响应：
-
-```json
-{
-  "code": 0,
-  "files": [
-    {
-      "id": 12,
-      "filename": "demo.txt",
-      "content_type": "text/plain",
-      "size": 18,
-      "is_public": false,
-      "owner": "demo",
-      "created_at": "2026-04-16 14:00:00"
-    }
-  ]
-}
-```
-
-#### `POST /api/private/files`
-
-上传文件。当前主路径使用 JSON 请求体，通过 `content_base64` 或直接文本内容传输。
-
-请求体：
-
-```json
-{
-  "filename": "demo.txt",
-  "content_base64": "SGVsbG8gd29ybGQ=",
-  "content_type": "text/plain",
-  "is_public": false
-}
-```
-
-兼容字段：
-
-- `filename` / `name`
-- `content` / `file`
-- `content_base64` / `file_base64`
-- `content_type` / `file_content_type`
-
-上传大小限制：
-
-- 当前上传大小限制为 `64 KB`
-
-成功响应：
-
-```json
-{
-  "code": 0,
-  "message": "upload success",
-  "file": {
-    "id": 12,
-    "filename": "demo.txt",
-    "size": 11,
-    "is_public": false
-  }
-}
-```
-
-#### `GET /api/private/files/:id/download`
-
-下载当前用户拥有的文件。
-
-响应类型：
-
-- 文件流
-- 携带 `Content-Disposition: attachment`
-
-#### `DELETE /api/private/files/:id`
-
-删除当前用户拥有的文件及其元数据。
-
-成功响应：
-
-```json
-{"code":0,"message":"delete success"}
-```
-
-#### `POST /api/private/files/:id/visibility`
-
-切换文件公开可见性。
-
-请求体：
-
-```json
-{
-  "is_public": true
-}
-```
-
-成功响应：
-
-```json
-{"code":0,"message":"file is now public"}
-```
-
-```json
-{"code":0,"message":"file is now private"}
-```
-
-### 公开文件接口
-
-#### `GET /api/files/public`
-
-返回公开文件列表，最多 `100` 条。
-
-#### `GET /api/files/public/:id`
-
-返回公开文件详情。
-
-示例响应：
-
-```json
-{
-  "code": 0,
-  "file": {
-    "id": 12,
-    "filename": "demo.txt",
-    "content_type": "text/plain",
-    "size": 11,
-    "owner": "demo",
-    "is_public": true,
-    "download_url": "/api/files/public/12/download"
-  }
-}
-```
-
-#### `GET /api/files/public/:id/download`
-
-下载公开文件，无需登录。
+### 接口分组
+
+- 公共接口：`GET /healthz`、`GET /`、`POST /api/register`、`POST /api/login`
+- 私有接口：`GET /api/private/ping`、`POST /api/private/logout`、`GET /api/private/operations`、`DELETE /api/private/operations/:id`
+- 文件接口：`GET /api/private/files`、`POST /api/private/files`、`GET /api/private/files/:id/download`、`DELETE /api/private/files/:id`、`POST /api/private/files/:id/visibility`
+- 公开文件：`GET /api/files/public`、`GET /api/files/public/:id`、`GET /api/files/public/:id/download`
+- 页面入口：`/index.html`、`/login.html`、`/register.html`、`/welcome.html`、`/files.html`、`/share.html`
+
+### 请求与响应要点
+
+- 登录成功后返回 Bearer Token 与过期时间
+- 上传接口当前主路径使用 JSON，请求体支持 `content_base64`
+- 上传大小限制为 `64 KB`
+- 文件下载返回文件流，并附带 `Content-Disposition: attachment`
+- 操作日志和文件列表默认返回最近 `50` 条记录
+
+完整接口说明、字段示例和典型响应见 [docs/api.md](docs/api.md)。
 
 ### 常见错误码
 
@@ -618,38 +235,13 @@ Authorization: Bearer <token>
 
 ## 文件业务说明
 
-### 数据表
+- 数据模型：`user`、`user_sessions`、`files`、`operation_logs`
+- 权限控制：`/api/private/*` 统一走 Bearer Token，文件读写按资源归属校验，公开文件支持匿名下载
+- 安全策略：密码采用 `SHA-256(salt + password)`，登录态持久化到 `user_sessions`
+- 存储方式：文件内容写入 `root/uploads/`，元数据和审计信息写入 MySQL
+- 页面入口：登录后进入欢迎页，再跳转到媒体页或文件管理页
 
-- `user`：用户名和密码信息
-- `user_sessions`：会话 Token 和过期时间
-- `files`：文件归属、磁盘文件名、原始文件名、类型、大小、创建时间、公开状态
-- `operation_logs`：用户行为日志
-
-### 权限模型
-
-- 登录成功后由服务端生成会话 Token，并持久化到 `user_sessions`
-- `/api/private/*` 路由统一走 Bearer Token 鉴权
-- 文件下载、删除、可见性切换按 `owner_username` 校验资源归属
-- 公开文件下载可匿名访问
-
-### 安全处理
-
-- 密码以 `SHA-256(salt + password)` 形式保存
-- 对旧数据保留兼容逻辑，登录成功后自动升级为带盐哈希
-- 登录态持久化到数据库，服务重启后仍可恢复有效会话
-
-### 存储方式
-
-- 文件内容写入 `root/uploads/`
-- 文件元数据写入 `files`
-- 用户操作审计写入 `operation_logs`
-- `docker-compose.yml` 将 `./root/uploads` 挂载到容器内 `/app/root/uploads`
-
-### 页面流程
-
-- 登录成功后进入欢迎页
-- 欢迎页提供 `看照片`、`看视频`、`文件管理台` 等入口
-- 文件管理页直接复用当前登录态，不再内嵌二次登录表单
+文件模块的实现细节见 [docs/file-module.md](docs/file-module.md)。
 
 ## 请求时序
 
@@ -662,48 +254,16 @@ sequenceDiagram
     participant SR as SubReactor
     participant TP as Thread Pool
     participant HC as http_conn
-    participant DB as MySQL
 
     C->>MR: TCP connect
     MR->>MR: accept()
     MR->>SR: dispatch(connfd)
-    SR->>SR: register_connection + refresh_timer
     C->>SR: HTTP request
-    SR->>HC: read_once()
     SR->>TP: append_p(http_conn*)
     TP->>HC: process()
-    HC->>HC: parse_request_line / headers / body
-    HC->>HC: middleware_request_log
-    HC->>HC: middleware_auth
-    HC->>DB: query if needed
-    DB-->>HC: result
-    HC->>HC: route_request + process_write
+    HC->>HC: parse + auth + route
     TP-->>SR: response ready
-    SR->>C: write()/sendfile()/SSL_write()
-```
-
-### 登录请求时序
-
-```mermaid
-sequenceDiagram
-    participant C as Client
-    participant SR as SubReactor
-    participant TP as Thread Pool
-    participant HC as http_conn
-    participant DB as MySQL
-
-    C->>SR: POST /api/login
-    SR->>TP: append_p()
-    TP->>HC: process()
-    HC->>HC: parse_post_body()
-    HC->>DB: SELECT passwd, passwd_salt FROM user
-    DB-->>HC: user row
-    HC->>HC: verify_user_password()
-    HC->>HC: make_session_token()
-    HC->>DB: INSERT/UPDATE user_sessions
-    HC->>DB: INSERT operation_logs(login)
-    HC-->>SR: JSON response with token
-    SR-->>C: 200 OK
+    SR-->>C: write response
 ```
 
 ### 文件上传请求时序
@@ -718,63 +278,14 @@ sequenceDiagram
     participant DB as MySQL
 
     C->>SR: POST /api/private/files
-    Note over C,SR: Authorization + JSON body
     SR->>TP: append_p()
     TP->>HC: process()
-    HC->>HC: parse_post_body()
-    HC->>HC: middleware_auth()
-    HC->>DB: lookup_session(token)
-    DB-->>HC: username
+    HC->>HC: parse body + auth
     HC->>FS: write file content
     HC->>DB: INSERT files
     HC->>DB: INSERT operation_logs(upload)
     HC-->>SR: JSON response(file id)
     SR-->>C: 200 OK
-```
-
-### 文件下载请求时序
-
-```mermaid
-sequenceDiagram
-    participant C as Client
-    participant SR as SubReactor
-    participant TP as Thread Pool
-    participant HC as http_conn
-    participant DB as MySQL
-    participant FS as root/uploads
-
-    C->>SR: GET /api/private/files/:id/download
-    SR->>TP: append_p()
-    TP->>HC: process()
-    HC->>HC: middleware_auth()
-    HC->>DB: lookup_session(token)
-    DB-->>HC: username
-    HC->>DB: SELECT file metadata
-    DB-->>HC: owner + stored_name
-    HC->>HC: owner check
-    HC->>FS: open(file)
-    HC->>DB: INSERT operation_logs(download)
-    TP-->>SR: FILE_REQUEST
-    SR-->>C: response headers + file body
-```
-
-### 超时连接回收时序
-
-```mermaid
-sequenceDiagram
-    participant SR as SubReactor
-    participant HT as HeapTimer
-    participant HC as http_conn
-
-    loop periodic scan
-        SR->>HT: scan_timeout()
-        HT->>HC: check last_active
-        alt expired
-            HC->>HC: close_conn()
-        else active
-            HT->>HT: add_or_update()
-        end
-    end
 ```
 
 ### 关键说明
@@ -925,7 +436,6 @@ curl -i http://127.0.0.1:9006/
 
 ## 文档索引
 
-- [README 首页](README.md)
 - [架构说明](docs/architecture.md)
 - [接口文档](docs/api.md)
 - [请求时序](docs/request-sequence.md)
