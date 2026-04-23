@@ -8,13 +8,6 @@
 
 Atlas WebServer 是一个基于 C++、Linux `epoll` 和 MySQL 的工程化 Web 服务项目。它实现了 `Main Reactor + Multi-SubReactor + Thread Pool` 并发模型，并提供 HTTP/1.1、静态资源、JSON API、Bearer Token 鉴权、文件管理、操作审计、Docker Compose 部署、脚本化测试和性能分析材料。
 
-## 性能快照
-
-- [完整性能报告](docs/benchmark.md)
-- [最新压测结果 CSV](reports/benchmarks/best_mutex_fixed_20260423/results.csv)
-- [火焰图预览：GET /healthz](reports/perf/previews/healthz_flamegraph.png)
-- [火焰图预览：GET /api/private/files](reports/perf/previews/private_files_flamegraph.png)
-
 ## 核心看点
 
 | 维度 | 内容 |
