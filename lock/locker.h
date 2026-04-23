@@ -5,6 +5,7 @@
 #include <pthread.h>
 #include <semaphore.h>
 #include <errno.h>
+#include <time.h>
 
 class sem
 {
@@ -30,6 +31,42 @@ public:
     bool wait()
     {
         return sem_wait(&m_sem) == 0;
+    }
+    bool timewait(const struct timespec &t)
+    {
+#ifdef __APPLE__
+        while (true)
+        {
+            if (sem_trywait(&m_sem) == 0)
+            {
+                return true;
+            }
+            if (errno != EAGAIN)
+            {
+                return false;
+            }
+
+            struct timespec now;
+            clock_gettime(CLOCK_REALTIME, &now);
+            if (now.tv_sec > t.tv_sec || (now.tv_sec == t.tv_sec && now.tv_nsec >= t.tv_nsec))
+            {
+                errno = ETIMEDOUT;
+                return false;
+            }
+
+            struct timespec sleep_time;
+            sleep_time.tv_sec = 0;
+            sleep_time.tv_nsec = 1000000;
+            nanosleep(&sleep_time, NULL);
+        }
+#else
+        int ret = sem_timedwait(&m_sem, &t);
+        if (ret != 0)
+        {
+            errno = ret == -1 ? errno : ret;
+        }
+        return ret == 0;
+#endif
     }
     bool post()
     {

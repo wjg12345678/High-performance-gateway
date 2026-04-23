@@ -44,6 +44,7 @@ public:
               int thread_num, int threadpool_max_threads, int threadpool_idle_timeout,
               int mysql_idle_timeout, int conn_timeout,
               int close_log, int actor_model, int log_level, int log_split_lines, int log_queue_size,
+              const string &threadpool_queue_mode,
               int https_enable, const string &https_cert_file, const string &https_key_file,
               const string &auth_token);
 
@@ -126,6 +127,7 @@ public:
     int m_thread_num;
     int m_threadpool_max_threads;
     int m_threadpool_idle_timeout;
+    string m_threadpool_queue_mode;
 
     //epoll_event相关
     epoll_event events[MAX_EVENT_NUMBER];

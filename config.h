@@ -76,6 +76,7 @@ public:
     int threadpool_max_threads;
     int threadpool_idle_timeout;
     int mysql_idle_timeout;
+    string threadpool_queue_mode;
 
 private:
     string m_config_file_path;

@@ -254,6 +254,7 @@ int run_server_process(const Config &config)
                 config.mysql_idle_timeout, config.conn_timeout,
                 config.close_log, config.actor_model, config.log_level,
                 config.log_split_lines, config.log_queue_size,
+                config.threadpool_queue_mode,
                 config.https_enable, config.https_cert_file, config.https_key_file,
                 config.auth_token);
 

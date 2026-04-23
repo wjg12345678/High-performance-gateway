@@ -204,8 +204,19 @@ export TWS_DB_NAME=qgydb
 | `db_name` / `TWS_DB_NAME` | `qgydb` | 数据库名 |
 | `threadpool_max_threads` / `TWS_THREADPOOL_MAX_THREADS` | `8` | 线程池最大线程数，默认与 `thread_num` 相同，形成固定大小线程池 |
 | `threadpool_idle_timeout` / `TWS_THREADPOOL_IDLE_TIMEOUT` | `30` | 线程池空闲线程回收秒数 |
+| `threadpool_queue_mode` / `TWS_THREADPOOL_QUEUE_MODE` | `mutex` | 线程池任务队列模式，可选 `mutex` 或 `lockfree` |
 | `mysql_idle_timeout` / `TWS_MYSQL_IDLE_TIMEOUT` | `60` | MySQL 连接空闲回收秒数 |
 | `pid_file` / `TWS_PID_FILE` | `./atlas-webserver.pid` | PID 文件路径 |
+
+线程池队列模式切换示例：
+
+```bash
+docker compose up -d --build
+TWS_THREADPOOL_QUEUE_MODE=lockfree docker compose up -d --build
+```
+
+- 默认 `mutex`
+- 可选 `lockfree`
 
 ## API 概览
 
@@ -459,6 +470,46 @@ curl -i http://127.0.0.1:9006/
 - `异步日志 + 固定线程池` 是现阶段最值得保留的方向，说明“线程池动态扩缩”比“异步日志队列”更伤性能。
 - `同步日志 + 固定线程池` 虽然吞吐最高，但尾延迟最差，不适合作为直接默认配置。
 - 综合吞吐、实现风险和线上稳定性，当前更合理的默认策略是：继续保留异步日志，但使用固定大小线程池，并优先优化轻请求的线程池投递路径。
+
+### 线程池队列模式对比
+
+2026 年 4 月 23 日在同一台机器、同一套 Docker Compose 环境下，对线程池的 `mutex` 和 `lockfree` 两种任务队列模式做了 A/B 压测。固定条件如下：
+
+- 部署方式：`docker compose up -d --build`
+- 压测工具：`wrk`
+- 压测参数：`-t4 -d10s`
+- 对比变量：`TWS_THREADPOOL_QUEUE_MODE=mutex|lockfree`
+- 其余配置保持一致
+
+#### 实测数据
+
+| 接口 | 并发 | Mutex Req/s | Lockfree Req/s | 结论 |
+| --- | ---: | ---: | ---: | --- |
+| `/healthz` | 50 | 3147.07 | 2983.72 | `mutex` 略好 |
+| `/healthz` | 200 | 8461.43 | 7847.66 | `mutex` 更好 |
+| `/api/private/files` | 50 | 2229.22 | 2236.20 | 基本持平 |
+| `/` | 200 | 2809.38 | 2553.41 | `mutex` 更好 |
+| `/api/private/ping` | 200 | 4506.20 | 4051.93 | `mutex` 更好 |
+| `/api/private/files` | 200 | 4322.92 | 3868.40 | `mutex` 更好 |
+
+#### 结论
+
+- 当前代码下，`lockfree` 没有跑赢 `mutex`；低并发下最多接近平手，高并发下整体吞吐和稳定性都更弱。
+- 这说明当前瓶颈不是“把任务队列改成无锁”就能解决的问题，线程池同步路径只是整体成本的一部分。
+- 默认模式继续保持 `mutex` 更稳妥，`lockfree` 暂时保留为实验选项，便于后续继续验证。
+
+#### perf + FlameGraph 观察
+
+为避免凭直觉判断，又对 `mutex` 模式做了 `perf + FlameGraph` 采样：
+
+- `GET /healthz`：产物见 [wrk.txt](reports/perf/mutex_healthz/wrk.txt) 和 [flamegraph.svg](reports/perf/20260423_174015/flamegraph.svg)
+- `GET /api/private/files`：产物见 [wrk.txt](reports/perf/mutex_private_files/wrk.txt) 和 [flamegraph.svg](reports/perf/20260423_174258/flamegraph.svg)
+
+热点结论如下：
+
+- `GET /healthz` 的热点主要落在 `threadpool<HttpConnection>::enqueue/run`、`pthread_mutex_*`、`pthread_cond_*`、`futex_wake`，说明轻请求下线程池投递和唤醒成本非常显眼。
+- `GET /api/private/files` 的热点已经明显扩散到 `mysql_real_query`、`send`、`epoll_ctl`、`Log::write_log` 和日志队列唤醒路径，说明数据库访问、响应发送和日志实现与线程池一样重要。
+- 这次火焰图支持一个明确结论：当前阶段不应该默认假设“无锁队列一定更快”，系统热点是复合型的，至少包含线程池同步、日志同步、数据库 I/O 和 socket 发送。
 
 ### 优化优先级
 

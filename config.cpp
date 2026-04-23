@@ -27,6 +27,12 @@ int getenv_int_value(const char *name, int fallback)
     const char *value = getenv_value(name);
     return value ? atoi(value) : fallback;
 }
+
+string getenv_string_value(const char *name, const string &fallback)
+{
+    const char *value = getenv_value(name);
+    return value ? string(value) : fallback;
+}
 }
 
 Config::Config(){
@@ -82,6 +88,7 @@ Config::Config(){
     threadpool_max_threads = 8;
     threadpool_idle_timeout = 30;
     mysql_idle_timeout = 60;
+    threadpool_queue_mode = "mutex";
     m_config_file_path = "server.conf";
 }
 
@@ -148,6 +155,7 @@ void Config::load_file(const char *path)
         else if (key == "threadpool_max_threads") threadpool_max_threads = atoi(value.c_str());
         else if (key == "threadpool_idle_timeout") threadpool_idle_timeout = atoi(value.c_str());
         else if (key == "mysql_idle_timeout") mysql_idle_timeout = atoi(value.c_str());
+        else if (key == "threadpool_queue_mode") threadpool_queue_mode = value;
     }
 }
 
@@ -171,6 +179,7 @@ void Config::apply_env_overrides()
     threadpool_max_threads = getenv_int_value("TWS_THREADPOOL_MAX_THREADS", threadpool_max_threads);
     threadpool_idle_timeout = getenv_int_value("TWS_THREADPOOL_IDLE_TIMEOUT", threadpool_idle_timeout);
     mysql_idle_timeout = getenv_int_value("TWS_MYSQL_IDLE_TIMEOUT", mysql_idle_timeout);
+    threadpool_queue_mode = getenv_string_value("TWS_THREADPOOL_QUEUE_MODE", threadpool_queue_mode);
 
     const char *value = nullptr;
     value = getenv_value("TWS_PID_FILE");

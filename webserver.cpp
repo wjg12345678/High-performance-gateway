@@ -45,6 +45,7 @@ void WebServer::init(int port, string user, string passWord, string databaseName
                      int opt_linger, int trigmode, int sql_num, int thread_num, int threadpool_max_threads,
                      int threadpool_idle_timeout, int mysql_idle_timeout, int conn_timeout,
                      int close_log, int actor_model, int log_level, int log_split_lines, int log_queue_size,
+                     const string &threadpool_queue_mode,
                      int https_enable, const string &https_cert_file, const string &https_key_file,
                      const string &auth_token)
 {
@@ -59,6 +60,7 @@ void WebServer::init(int port, string user, string passWord, string databaseName
     m_thread_num = thread_num;
     m_threadpool_max_threads = threadpool_max_threads;
     m_threadpool_idle_timeout = threadpool_idle_timeout;
+    m_threadpool_queue_mode = threadpool_queue_mode;
     m_log_write = log_write;
     m_log_level = log_level;
     m_log_split_lines = log_split_lines;
@@ -166,8 +168,15 @@ void WebServer::sql_pool()
 
 void WebServer::thread_pool()
 {
+    threadpool<HttpConnection>::queue_mode mode = threadpool<HttpConnection>::queue_mode_mutex;
+    if (m_threadpool_queue_mode == "lockfree")
+    {
+        mode = threadpool<HttpConnection>::queue_mode_lockfree;
+    }
+
     m_pool = std::make_unique<threadpool<HttpConnection>>(0, m_connPool, m_thread_num, 10000,
-                                                          m_threadpool_max_threads, m_threadpool_idle_timeout);
+                                                          m_threadpool_max_threads, m_threadpool_idle_timeout,
+                                                          mode);
 }
 
 void WebServer::init_sub_reactors()
