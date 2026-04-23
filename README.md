@@ -167,6 +167,11 @@ TWS_LOG_WRITE=0 TWS_THREADPOOL_QUEUE_MODE=mutex docker compose up -d --build
 
 完整性能报告、原始数据和 FlameGraph 说明见 [性能报告](docs/benchmark.md)、[benchmark.csv](docs/benchmark.csv) 和 [FlameGraph 指南](docs/perf-flamegraph.md)。
 
+FlameGraph 原始产物是交互式 SVG，GitHub 对带脚本的 SVG 预览支持有限。仓库同时保留 PNG 预览图，适合在 GitHub 页面直接查看：
+
+- [healthz_flamegraph.png](reports/perf/previews/healthz_flamegraph.png)
+- [private_files_flamegraph.png](reports/perf/previews/private_files_flamegraph.png)
+
 ### 发布基准
 
 测试环境：本地 MacBook Pro，Docker Compose 同机部署 Web 与 MySQL，`wrk --latency`，`TWS_LOG_WRITE=0`，`TWS_THREAD_NUM=8`，`TWS_SQL_NUM=8`，HTTPS 关闭。不同机器和容器资源下绝对数值会变化，建议跨环境对比前重新采集。
