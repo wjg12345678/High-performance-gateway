@@ -65,14 +65,12 @@ SAMPLE_FREQ=199 \
 
 ## 示例火焰图
 
-下面这张图来自仓库内一份实际采样结果，场景是默认的 `GET /healthz`、`4` 线程、`200` 连接、`15s` 压测：
+下面这张图来自仓库内保留的一份 `GET /healthz` 采样预览图，场景是默认的 `4` 线程、`200` 连接、`15s` 压测：
 
-- 交互式 SVG：[`reports/perf/20260423_152955/flamegraph.svg`](../reports/perf/20260423_152955/flamegraph.svg)
-- GitHub 预览回退图：[`reports/perf/previews/healthz_flamegraph.png`](../reports/perf/previews/healthz_flamegraph.png)
+- 仓库内预览图：[`reports/perf/previews/healthz_flamegraph.png`](../reports/perf/previews/healthz_flamegraph.png)
+- 交互式 SVG：运行采样脚本后在生成目录下查看 `reports/perf/<timestamp>/flamegraph.svg`
 
-![Healthz FlameGraph SVG](../reports/perf/20260423_152955/flamegraph.svg)
-
-如果当前页面的 SVG 无法正常预览，通常是 GitHub 对带脚本的 SVG 支持有限；这时可以直接点开上面的 SVG 链接，或者查看下面的 PNG 预览图：
+GitHub 对带脚本的交互式 SVG 预览支持有限，因此这里默认展示 PNG 预览；如果你需要缩放、搜索和点击查看栈细节，运行脚本后直接打开产物目录中的 `flamegraph.svg`：
 
 ![Healthz FlameGraph Preview](../reports/perf/previews/healthz_flamegraph.png)
 
