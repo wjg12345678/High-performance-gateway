@@ -25,9 +25,13 @@ CREATE TABLE IF NOT EXISTS files (
     content_type VARCHAR(128) NOT NULL DEFAULT 'text/plain',
     file_size BIGINT NOT NULL DEFAULT 0,
     is_public TINYINT(1) NOT NULL DEFAULT 0,
+    content_sha256 CHAR(64) NOT NULL DEFAULT '',
+    deleted_at TIMESTAMP NULL DEFAULT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (id),
-    KEY idx_owner_username (owner_username)
+    KEY idx_owner_deleted_id (owner_username, deleted_at, id),
+    KEY idx_public_deleted_id (is_public, deleted_at, id),
+    KEY idx_owner_name_deleted (owner_username, original_name, deleted_at)
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS operation_logs (

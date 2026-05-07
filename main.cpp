@@ -251,7 +251,7 @@ int run_server_process(const Config &config)
     server.init(config.PORT, config.db_user, config.db_password, config.db_name, config.db_host, config.db_port, config.LOGWrite,
                 config.OPT_LINGER, config.TRIGMode, config.sql_num, config.thread_num,
                 config.threadpool_max_threads, config.threadpool_idle_timeout,
-                config.mysql_idle_timeout, config.conn_timeout,
+                config.mysql_idle_timeout, config.upload_max_bytes, config.conn_timeout,
                 config.close_log, config.actor_model, config.log_level,
                 config.log_split_lines, config.log_queue_size,
                 config.threadpool_queue_mode,

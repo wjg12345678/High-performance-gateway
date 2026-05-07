@@ -1,6 +1,7 @@
 #include "connection.h"
 
 #include <cerrno>
+#include <cstdio>
 #include <sys/sendfile.h>
 
 void modfd(int epollfd, int fd, int ev, int TRIGMode);

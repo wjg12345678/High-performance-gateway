@@ -23,4 +23,5 @@ docker/mysql/*.sql.tmp
 TinyWebServer.pid
 
 reports/
-root/uploads/*wrk-demo.txt
+root/uploads/*
+!root/uploads/.gitkeep

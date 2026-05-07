@@ -42,7 +42,7 @@ public:
               string dbHost, int dbPort,
               int log_write , int opt_linger, int trigmode, int sql_num,
               int thread_num, int threadpool_max_threads, int threadpool_idle_timeout,
-              int mysql_idle_timeout, int conn_timeout,
+              int mysql_idle_timeout, int upload_max_bytes, int conn_timeout,
               int close_log, int actor_model, int log_level, int log_split_lines, int log_queue_size,
               const string &threadpool_queue_mode,
               int https_enable, const string &https_cert_file, const string &https_key_file,
@@ -120,6 +120,7 @@ public:
     int m_dbPort;          //数据库端口
     int m_sql_num;
     int m_mysql_idle_timeout;
+    int m_upload_max_bytes;
 
     //线程池相关
     std::unique_ptr<threadpool<HttpConnection>> m_pool;

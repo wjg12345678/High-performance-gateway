@@ -15,12 +15,13 @@ TOKEN="$(printf '%s\n' "$LOGIN_INFO" | sed -n '2p')"
 
 TMP_FILE="$(make_demo_file)"
 trap 'rm -f "$TMP_FILE"' EXIT INT TERM
-CONTENT_BASE64="$(file_to_base64 "$TMP_FILE")"
 
 UPLOAD_RESPONSE="$(curl -sS -X POST "$BASE_URL/api/private/files" \
     -H "Authorization: Bearer $TOKEN" \
-    -H "Content-Type: application/json" \
-    -d "{\"filename\":\"demo.txt\",\"content_base64\":\"$CONTENT_BASE64\",\"content_type\":\"text/plain\"}")"
+    -H "Expect:" \
+    -F "file=@$TMP_FILE;type=text/plain" \
+    -F "filename=demo.txt" \
+    -F "is_public=false")"
 FILE_ID="$(extract_file_id "$UPLOAD_RESPONSE")"
 if [ -z "$FILE_ID" ]; then
     echo "upload failed: $UPLOAD_RESPONSE"
@@ -29,9 +30,13 @@ fi
 
 echo "login: $LOGIN_RESPONSE"
 echo "upload: $UPLOAD_RESPONSE"
-echo "list: $(curl -sS "$BASE_URL/api/private/files" -H "Authorization: Bearer $TOKEN")"
+echo "list page1: $(curl -sS "$BASE_URL/api/private/files?limit=10" -H "Authorization: Bearer $TOKEN")"
 echo "download headers/body:"
 curl -i -sS "$BASE_URL/api/private/files/$FILE_ID/download" -H "Authorization: Bearer $TOKEN"
 echo
 echo "delete: $(curl -sS -X DELETE "$BASE_URL/api/private/files/$FILE_ID" -H "Authorization: Bearer $TOKEN")"
+echo "trash: $(curl -sS "$BASE_URL/api/private/files?include_deleted=1&limit=10" -H "Authorization: Bearer $TOKEN")"
+echo "restore: $(curl -sS -X POST "$BASE_URL/api/private/files/$FILE_ID/restore" -H "Authorization: Bearer $TOKEN")"
+echo "active after restore: $(curl -sS "$BASE_URL/api/private/files?limit=10" -H "Authorization: Bearer $TOKEN")"
+echo "delete again: $(curl -sS -X DELETE "$BASE_URL/api/private/files/$FILE_ID" -H "Authorization: Bearer $TOKEN")"
 echo "logout: $(curl -sS -X POST "$BASE_URL/api/private/logout" -H "Authorization: Bearer $TOKEN")"

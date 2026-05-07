@@ -7,7 +7,8 @@ PASSWORD="${PASSWORD:-123456}"
 wait_for_server() {
     i=0
     while [ "$i" -lt 20 ]; do
-        if curl -sS "$BASE_URL/healthz" >/dev/null 2>&1; then
+        healthz_response="$(curl -sS "$BASE_URL/healthz" 2>/dev/null || true)"
+        if [ -n "$healthz_response" ]; then
             return 0
         fi
         sleep 1

@@ -43,12 +43,13 @@ services:
       TWS_THREADPOOL_IDLE_TIMEOUT: ${TWS_THREADPOOL_IDLE_TIMEOUT:-30}
       TWS_THREADPOOL_QUEUE_MODE: ${TWS_THREADPOOL_QUEUE_MODE:-mutex}
       TWS_SQL_NUM: ${TWS_SQL_NUM:-8}
+      TWS_UPLOAD_MAX_BYTES: ${TWS_UPLOAD_MAX_BYTES:-10485760}
       TWS_CONN_TIMEOUT: ${TWS_CONN_TIMEOUT:-15}
     volumes:
       - ./root/uploads:/app/root/uploads
     ports:
       - "9006:9006"
-    command: ["./server", "-a", "1"]
+    command: ["./server"]
 
 volumes:
   mysql-data:

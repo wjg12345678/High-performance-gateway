@@ -4,9 +4,28 @@
 
 #include "./CGImysql/sql_connection_pool.h"
 
+namespace
+{
+bool execute_optional_migration(MYSQL *mysql, const char *sql)
+{
+    if (mysql == nullptr || sql == nullptr)
+    {
+        return false;
+    }
+
+    if (mysql_query(mysql, sql) == 0)
+    {
+        return true;
+    }
+
+    const unsigned int err = mysql_errno(mysql);
+    return err == 1060 || err == 1061 || err == 1091;
+}
+}
+
 WebServer::WebServer()
     : m_https_enable(0), m_ssl_ctx(nullptr), m_epollfd(-1), m_connPool(nullptr),
-      m_listenfd(-1), m_sub_reactor_num(1), m_next_sub_reactor(0)
+      m_listenfd(-1), m_sub_reactor_num(1), m_next_sub_reactor(0), m_upload_max_bytes(10 * 1024 * 1024)
 {
     users.resize(MAX_FD);
     m_pending_addresses.resize(MAX_FD);
@@ -43,7 +62,7 @@ WebServer::~WebServer()
 
 void WebServer::init(int port, string user, string passWord, string databaseName, string dbHost, int dbPort, int log_write,
                      int opt_linger, int trigmode, int sql_num, int thread_num, int threadpool_max_threads,
-                     int threadpool_idle_timeout, int mysql_idle_timeout, int conn_timeout,
+                     int threadpool_idle_timeout, int mysql_idle_timeout, int upload_max_bytes, int conn_timeout,
                      int close_log, int actor_model, int log_level, int log_split_lines, int log_queue_size,
                      const string &threadpool_queue_mode,
                      int https_enable, const string &https_cert_file, const string &https_key_file,
@@ -57,6 +76,7 @@ void WebServer::init(int port, string user, string passWord, string databaseName
     m_dbPort = dbPort;
     m_sql_num = sql_num;
     m_mysql_idle_timeout = mysql_idle_timeout;
+    m_upload_max_bytes = upload_max_bytes > 0 ? upload_max_bytes : 10 * 1024 * 1024;
     m_thread_num = thread_num;
     m_threadpool_max_threads = threadpool_max_threads;
     m_threadpool_idle_timeout = threadpool_idle_timeout;
@@ -76,6 +96,7 @@ void WebServer::init(int port, string user, string passWord, string databaseName
     m_sub_reactor_num = thread_num > 0 ? thread_num : 1;
     m_next_sub_reactor = 0;
     HttpConnection::set_legacy_compat(legacy_compat != 0);
+    HttpConnection::configure_uploads(static_cast<size_t>(m_upload_max_bytes));
 }
 
 bool WebServer::tls_init()
@@ -161,7 +182,12 @@ void WebServer::sql_pool()
     connectionRAII mysqlcon(&mysql, m_connPool);
     if (mysql != nullptr)
     {
-        mysql_query(mysql, "ALTER TABLE files ADD COLUMN is_public TINYINT(1) NOT NULL DEFAULT 0");
+        execute_optional_migration(mysql, "ALTER TABLE files ADD COLUMN is_public TINYINT(1) NOT NULL DEFAULT 0");
+        execute_optional_migration(mysql, "ALTER TABLE files ADD COLUMN content_sha256 CHAR(64) NOT NULL DEFAULT ''");
+        execute_optional_migration(mysql, "ALTER TABLE files ADD COLUMN deleted_at TIMESTAMP NULL DEFAULT NULL");
+        execute_optional_migration(mysql, "ALTER TABLE files ADD KEY idx_owner_deleted_id (owner_username, deleted_at, id)");
+        execute_optional_migration(mysql, "ALTER TABLE files ADD KEY idx_public_deleted_id (is_public, deleted_at, id)");
+        execute_optional_migration(mysql, "ALTER TABLE files ADD KEY idx_owner_name_deleted (owner_username, original_name, deleted_at)");
     }
     users[0].initmysql_result(m_connPool);
 }
@@ -290,6 +316,15 @@ void WebServer::dealwithread(int sockfd)
         return;
     }
 
+    if (1 == m_actormodel)
+    {
+        if (!m_pool->append(&users[sockfd], 0))
+        {
+            users[sockfd].close_conn();
+        }
+        return;
+    }
+
     if (users[sockfd].read_once())
     {
         LOG_INFO("deal with the client(%s)", inet_ntoa(users[sockfd].get_address()->sin_addr));
@@ -309,6 +344,15 @@ void WebServer::dealwithwrite(int sockfd)
     {
         int handshake_result = users[sockfd].do_tls_handshake();
         if (handshake_result < 0)
+        {
+            users[sockfd].close_conn();
+        }
+        return;
+    }
+
+    if (1 == m_actormodel)
+    {
+        if (!m_pool->append(&users[sockfd], 1))
         {
             users[sockfd].close_conn();
         }

@@ -223,9 +223,11 @@ HttpConnection::HTTP_CODE HttpConnection::parse_content(char *text)
     if (m_stream_body_file != nullptr)
     {
         const long available = m_read_idx - m_body_start_idx;
-        if (available > 0)
+        const long remaining = m_content_length - m_stream_body_bytes_received;
+        const long chunk_len = available > remaining ? remaining : available;
+        if (chunk_len > 0)
         {
-            if (!append_streamed_body_chunk(m_read_buf.data() + m_body_start_idx, static_cast<size_t>(available)))
+            if (!append_streamed_body_chunk(m_read_buf.data() + m_body_start_idx, static_cast<size_t>(chunk_len)))
             {
                 if (m_body_parse_error_status == 413)
                 {
@@ -256,6 +258,22 @@ bool HttpConnection::parse_post_body()
 {
     m_form_data.clear();
     m_json_data.clear();
+    m_body_parse_error_status = 0;
+    m_body_parse_error_title.clear();
+    m_body_parse_error_message.clear();
+
+    if (starts_with_ignore_case_local(m_content_type, "multipart/form-data"))
+    {
+        if (!m_stream_body_tmp_path.empty() || m_stream_body_file != nullptr)
+        {
+            return parse_multipart_form_data_from_file();
+        }
+        if (m_request_body.empty())
+        {
+            return true;
+        }
+        return parse_multipart_form_data(m_request_body);
+    }
 
     if (m_request_body.empty())
     {
@@ -271,12 +289,6 @@ bool HttpConnection::parse_post_body()
     {
         return parse_json_body(m_request_body);
     }
-
-    if (starts_with_ignore_case_local(m_content_type, "multipart/form-data"))
-    {
-        return parse_multipart_form_data(m_request_body);
-    }
-
     return true;
 }
 

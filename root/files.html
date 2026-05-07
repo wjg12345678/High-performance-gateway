@@ -227,7 +227,7 @@
                             <div>
                                 <label for="upload-file">选择文件</label>
                                 <input id="upload-file" name="file" type="file" required>
-                                <div class="mini" style="margin-top: 6px;">当前版本支持 64 KB 以内的小文件上传，页面与服务端限制保持一致。</div>
+                                <div class="mini" style="margin-top: 6px;">页面使用 multipart/form-data 直传；实际大小上限由服务端 `upload_max_bytes` 配置决定。</div>
                             </div>
                             <div>
                                 <label for="upload-name">展示文件名</label>
@@ -300,7 +300,6 @@
 
         <script>
             (function () {
-                const MAX_UPLOAD_SIZE = 64 * 1024;
                 const state = {
                     token: sessionStorage.getItem("tws_demo_token") || "",
                     username: sessionStorage.getItem("tws_demo_user") || ""
@@ -336,21 +335,6 @@
                     return state.token ? { Authorization: "Bearer " + state.token } : {};
                 }
 
-                function fileToBase64(file) {
-                    return new Promise(function (resolve, reject) {
-                        const reader = new FileReader();
-                        reader.onload = function () {
-                            const result = String(reader.result || "");
-                            const commaIndex = result.indexOf(",");
-                            resolve(commaIndex >= 0 ? result.slice(commaIndex + 1) : result);
-                        };
-                        reader.onerror = function () {
-                            reject(new Error("文件读取未完成"));
-                        };
-                        reader.readAsDataURL(file);
-                    });
-                }
-
                 async function requestJson(url, options) {
                     const response = await fetch(url, options || {});
                     const text = await response.text();
@@ -378,7 +362,7 @@
                                     '<div class="file-name">' + escapeHtml(file.filename) + '</div>' +
                                     '<div class="mini">#' + file.id + '</div>' +
                                 '</div>' +
-                                '<div class="meta">类型: ' + escapeHtml(file.content_type) + '<br>大小: ' + file.size + ' bytes<br>创建时间: ' + escapeHtml(file.created_at) + '<br>可见范围: ' + (file.is_public ? '公开，可分享' : '仅自己可见') + '</div>' +
+                                '<div class="meta">类型: ' + escapeHtml(file.content_type) + '<br>大小: ' + file.size + ' bytes<br>SHA-256: ' + escapeHtml(file.sha256 || '-') + '<br>创建时间: ' + escapeHtml(file.created_at) + '<br>可见范围: ' + (file.is_public ? '公开，可分享' : '仅自己可见') + '</div>' +
                                 '<div class="row" style="margin-top: 14px;">' +
                                     '<button type="button" class="ghost" data-download="' + file.id + '">下载</button>' +
                                     (file.is_public ? '<button type="button" class="ghost" data-share="' + file.id + '">复制分享链接</button>' : '') +
@@ -402,7 +386,7 @@
                                     '<div class="file-name">' + escapeHtml(file.filename) + '</div>' +
                                     '<div class="mini">#' + file.id + '</div>' +
                                 '</div>' +
-                                '<div class="meta">上传者: ' + escapeHtml(file.owner) + '<br>类型: ' + escapeHtml(file.content_type) + '<br>大小: ' + file.size + ' bytes<br>创建时间: ' + escapeHtml(file.created_at) + '</div>' +
+                                '<div class="meta">上传者: ' + escapeHtml(file.owner) + '<br>类型: ' + escapeHtml(file.content_type) + '<br>大小: ' + file.size + ' bytes<br>SHA-256: ' + escapeHtml(file.sha256 || '-') + '<br>创建时间: ' + escapeHtml(file.created_at) + '</div>' +
                                 '<div class="row" style="margin-top: 14px;">' +
                                     '<button type="button" class="ghost" data-public-download="' + file.id + '">下载</button>' +
                                     '<button type="button" class="ghost" data-share="' + file.id + '">复制分享链接</button>' +
@@ -506,26 +490,20 @@
 
                     const file = uploadFileInput.files[0];
                     const fileName = uploadNameInput.value.trim() || file.name;
-                    if (file.size > MAX_UPLOAD_SIZE) {
-                        setStatus("当前版本支持 64 KB 以内的小文件上传。", "error");
-                        return;
-                    }
 
                     setStatus("文件上传中...", "");
                     try {
-                        const contentBase64 = await fileToBase64(file);
+                        const formData = new FormData();
+                        formData.append("file", file, file.name);
+                        formData.append("filename", fileName);
+                        formData.append("is_public", uploadPublicInput.checked ? "true" : "false");
                         const data = await requestJson("/api/private/files", {
                             method: "POST",
-                            headers: Object.assign({ "Content-Type": "application/json" }, authHeaders()),
-                            body: JSON.stringify({
-                                filename: fileName,
-                                content_base64: contentBase64,
-                                content_type: file.type || "application/octet-stream",
-                                is_public: uploadPublicInput.checked
-                            })
+                            headers: authHeaders(),
+                            body: formData
                         });
                         uploadForm.reset();
-                        setStatus("文件已上传，文件 ID: " + data.file.id, "ok");
+                        setStatus("文件已上传，文件 ID: " + data.file.id + "，SHA-256: " + (data.file.sha256 || "-"), "ok");
                         await refreshAll();
                     } catch (error) {
                         setStatus("上传未完成: " + error.message, "error");

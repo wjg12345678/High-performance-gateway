@@ -318,6 +318,8 @@ HttpConnection::HTTP_CODE HttpConnection::handle_api_request()
             return handle_file_download(suffix);
         if (m_method == POST && strstr(suffix, "/visibility") != nullptr)
             return handle_file_visibility_update(suffix);
+        if (m_method == POST && strstr(suffix, "/restore") != nullptr)
+            return handle_file_restore(suffix);
         if (m_method == DELETE)
             return handle_file_delete(suffix);
     }

@@ -133,7 +133,13 @@ Authorization: Bearer <token>
 
 ### `GET /api/private/files`
 
-返回当前用户最近 `50` 条文件记录。
+返回当前用户的分页文件记录。
+
+查询参数：
+
+- `limit`：每页条数，默认 `20`，最大 `100`
+- `cursor`：向下翻页游标，取上一页最后一条记录的 `id`
+- `include_deleted=1` 或 `trash=1`：查看回收站
 
 成功响应示例：
 
@@ -147,38 +153,39 @@ Authorization: Bearer <token>
       "content_type": "text/plain",
       "size": 18,
       "is_public": false,
+      "sha256": "2aae6c35c94fcfb415dbe95f408b9ce91ee846ed",
       "owner": "demo",
-      "created_at": "2026-04-16 14:00:00"
+      "created_at": "2026-04-16 14:00:00",
+      "is_deleted": false,
+      "content_available": true,
+      "deleted_at": null
     }
-  ]
+  ],
+  "pagination": {
+    "limit": 20,
+    "next_cursor": 0,
+    "has_more": false
+  },
+  "view": "active"
 }
 ```
 
 ### `POST /api/private/files`
 
-上传文件。当前主路径使用 JSON 请求体，通过 `content_base64` 或直接文本内容传输。
+上传文件。当前主路径使用 `multipart/form-data`，请求体先流式落盘到临时文件，再提取文件 part 并写入最终存储目录。
 
-请求体：
+表单字段：
 
-```json
-{
-  "filename": "demo.txt",
-  "content_base64": "SGVsbG8gd29ybGQ=",
-  "content_type": "text/plain",
-  "is_public": false
-}
-```
-
-兼容字段：
-
-- `filename` / `name`
-- `content` / `file`
-- `content_base64` / `file_base64`
-- `content_type` / `file_content_type`
+- `file`：二进制文件内容
+- `filename`：可选，覆盖展示文件名
+- `is_public`：可选，`true/false`
+- `content_type`：可选，未传时优先使用文件 part 自带 `Content-Type`
 
 限制：
 
-- 当前上传大小限制为 `64 KB`
+- 上传上限由 `upload_max_bytes` / `TWS_UPLOAD_MAX_BYTES` 配置，默认 `10 MB`
+- 默认仅支持单文件上传
+- 若同一用户重复上传同名文件，服务端会自动重命名为 `demo (1).txt`、`demo (2).txt`
 
 成功响应：
 
@@ -190,7 +197,8 @@ Authorization: Bearer <token>
     "id": 12,
     "filename": "demo.txt",
     "size": 11,
-    "is_public": false
+    "is_public": false,
+    "sha256": "64ec88ca00b268e5ba1a35678a1b5316d212f4f36631ec0b0f4cfd92f6f2cf07"
   }
 }
 ```
@@ -206,12 +214,29 @@ Authorization: Bearer <token>
 
 ### `DELETE /api/private/files/:id`
 
-删除当前用户拥有的文件及其元数据。
+软删除当前用户拥有的文件，文件会进入回收站。
 
 成功响应：
 
 ```json
-{"code":0,"message":"delete success"}
+{"code":0,"message":"file moved to recycle bin"}
+```
+
+### `POST /api/private/files/:id/restore`
+
+从回收站恢复当前用户拥有的文件。
+
+成功响应：
+
+```json
+{
+  "code": 0,
+  "message": "file restored",
+  "file": {
+    "id": 12,
+    "filename": "demo.txt"
+  }
+}
 ```
 
 ### `POST /api/private/files/:id/visibility`
@@ -240,7 +265,7 @@ Authorization: Bearer <token>
 
 ### `GET /api/files/public`
 
-返回公开文件列表，最多 `100` 条。
+返回公开文件分页列表，支持 `limit`、`cursor`。
 
 ### `GET /api/files/public/:id`
 
@@ -258,6 +283,7 @@ Authorization: Bearer <token>
     "size": 11,
     "owner": "demo",
     "is_public": true,
+    "sha256": "64ec88ca00b268e5ba1a35678a1b5316d212f4f36631ec0b0f4cfd92f6f2cf07",
     "download_url": "/api/files/public/12/download"
   }
 }
