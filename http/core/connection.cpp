@@ -17,7 +17,7 @@
 SSL_CTX *HttpConnection::m_ssl_ctx = nullptr;
 bool HttpConnection::m_tls_enabled = false;
 bool HttpConnection::m_legacy_compat_enabled = false;
-size_t HttpConnection::m_upload_max_bytes = 10 * 1024 * 1024;
+size_t HttpConnection::m_upload_max_bytes = 100 * 1024 * 1024;
 size_t HttpConnection::m_upload_request_overhead_bytes = 512 * 1024;
 
 namespace
@@ -135,7 +135,7 @@ void HttpConnection::configure_uploads(size_t upload_max_bytes)
 {
     if (upload_max_bytes == 0)
     {
-        upload_max_bytes = 10 * 1024 * 1024;
+        upload_max_bytes = 100 * 1024 * 1024;
     }
     m_upload_max_bytes = upload_max_bytes;
 }

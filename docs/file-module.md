@@ -17,7 +17,7 @@
   - 文件字段默认使用 `file`
   - 可通过普通表单字段传 `filename`、`is_public`
   - 请求体先流式写入临时文件，再提取文件 part，避免整块常驻内存
-  - 上传大小上限由 `upload_max_bytes` / `TWS_UPLOAD_MAX_BYTES` 控制，默认 `10 MB`
+  - 上传大小上限由 `upload_max_bytes` / `TWS_UPLOAD_MAX_BYTES` 控制，默认 `100 MB`
 - `GET /api/private/files`
   - 返回当前登录用户的分页文件列表
   - 支持 `limit`、`cursor`

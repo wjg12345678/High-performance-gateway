@@ -183,7 +183,7 @@ Authorization: Bearer <token>
 
 限制：
 
-- 上传上限由 `upload_max_bytes` / `TWS_UPLOAD_MAX_BYTES` 配置，默认 `10 MB`
+- 上传上限由 `upload_max_bytes` / `TWS_UPLOAD_MAX_BYTES` 配置，默认 `100 MB`
 - 默认仅支持单文件上传
 - 若同一用户重复上传同名文件，服务端会自动重命名为 `demo (1).txt`、`demo (2).txt`
 

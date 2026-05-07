@@ -88,7 +88,7 @@ Config::Config(){
     threadpool_max_threads = 8;
     threadpool_idle_timeout = 30;
     mysql_idle_timeout = 60;
-    upload_max_bytes = 10 * 1024 * 1024;
+    upload_max_bytes = 100 * 1024 * 1024;
     threadpool_queue_mode = "mutex";
     m_config_file_path = "server.conf";
 }

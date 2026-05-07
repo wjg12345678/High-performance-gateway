@@ -25,7 +25,7 @@ bool execute_optional_migration(MYSQL *mysql, const char *sql)
 
 WebServer::WebServer()
     : m_https_enable(0), m_ssl_ctx(nullptr), m_epollfd(-1), m_connPool(nullptr),
-      m_listenfd(-1), m_sub_reactor_num(1), m_next_sub_reactor(0), m_upload_max_bytes(10 * 1024 * 1024)
+      m_listenfd(-1), m_sub_reactor_num(1), m_next_sub_reactor(0), m_upload_max_bytes(100 * 1024 * 1024)
 {
     users.resize(MAX_FD);
     m_pending_addresses.resize(MAX_FD);
@@ -76,7 +76,7 @@ void WebServer::init(int port, string user, string passWord, string databaseName
     m_dbPort = dbPort;
     m_sql_num = sql_num;
     m_mysql_idle_timeout = mysql_idle_timeout;
-    m_upload_max_bytes = upload_max_bytes > 0 ? upload_max_bytes : 10 * 1024 * 1024;
+    m_upload_max_bytes = upload_max_bytes > 0 ? upload_max_bytes : 100 * 1024 * 1024;
     m_thread_num = thread_num;
     m_threadpool_max_threads = threadpool_max_threads;
     m_threadpool_idle_timeout = threadpool_idle_timeout;
