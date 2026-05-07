@@ -47,9 +47,10 @@ sequenceDiagram
     HC->>HC: parse_post_body()
     HC->>DB: SELECT passwd, passwd_salt FROM user
     DB-->>HC: user row
-    HC->>HC: verify_user_password()
+    HC->>HC: verify_user_password(PBKDF2 / legacy upgrade)
     HC->>HC: make_session_token()
     HC->>DB: INSERT/UPDATE user_sessions
+    HC->>DB: DELETE old user_sessions for same user
     HC->>DB: INSERT operation_logs(login)
     HC-->>SR: JSON response with token
     SR-->>C: 200 OK
@@ -132,4 +133,5 @@ sequenceDiagram
 - SubReactor 负责连接级读写事件和超时管理，线程池负责业务解析和数据库访问。
 - `http_conn` 是请求处理核心，串联了解析、鉴权、路由、数据库操作和响应拼装。
 - 文件服务按“文件内容落磁盘、元数据和审计落 MySQL”的方式拆分。
-- 私有接口统一走 `middleware_auth()`，token 先查内存缓存，再回落到 `user_sessions`。
+- 私有接口统一走 `middleware_auth()`，token 先查带过期时间的内存缓存，再回落到 `user_sessions`。
+- session 接近过期时会自动刷新，`logout` 支持当前 token 或当前用户全会话失效。

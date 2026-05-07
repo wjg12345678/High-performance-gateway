@@ -129,9 +129,25 @@ std::string file_storage_root(const std::string &doc_root)
     return doc_root + "/uploads";
 }
 
+std::string temp_storage_root(const std::string &doc_root)
+{
+    return file_storage_root(doc_root) + "/.tmp";
+}
+
 std::string build_file_disk_path(const std::string &doc_root, const std::string &stored_name)
 {
     return file_storage_root(doc_root) + "/" + stored_name;
+}
+
+std::string file_extension(const std::string &value)
+{
+    const size_t slash = value.find_last_of("/\\");
+    const size_t dot = value.find_last_of('.');
+    if (dot == std::string::npos || (slash != std::string::npos && dot < slash + 1))
+    {
+        return "";
+    }
+    return value.substr(dot);
 }
 
 bool ensure_directory(const std::string &path)

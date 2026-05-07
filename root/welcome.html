@@ -11,30 +11,27 @@
         <div class="shell">
             <section class="hero">
                 <p class="eyebrow">Workspace</p>
-                <h1>Atlas WebServer 控制台</h1>
-                <p>当前账号已登录，可进入文件管理台继续处理文件协作与操作记录。</p>
+                <h1>鉴权文件服务控制台</h1>
+                <p>当前账号已登录，可直接进入文件管理、公开分享和操作审计视图。静态媒体样例仍可访问，但不再作为默认主入口。</p>
             </section>
 
-            <section class="grid one">
+            <section class="grid two">
                 <article class="card">
                     <p class="kicker">Files</p>
                     <h2>文件管理台</h2>
                     <p class="lead">进入文件管理台，集中完成上传、列表浏览、下载、删除和记录查看。</p>
                     <div class="actions">
-                        <form action="files.html" method="get">
-                            <button type="submit">打开管理台</button>
-                        </form>
+                        <a class="link-button" href="/files">打开管理台</a>
                     </div>
                 </article>
 
                 <article class="card">
-                    <p class="kicker">Media</p>
-                    <h2>静态资源查看</h2>
-                    <p class="lead">打开静态资源页，直接查看预置照片和视频素材。</p>
+                    <p class="kicker">Sharing</p>
+                    <h2>公开分享与审计</h2>
+                    <p class="lead">查看公开文件页，确认分享结果，并结合操作日志回溯文件访问与变更行为。</p>
                     <div class="actions">
-                        <form action="media.html" method="get">
-                            <button type="submit">查看静态资源</button>
-                        </form>
+                        <a class="link-button" href="/share">查看公开页</a>
+                        <a class="link-button secondary" href="/media">辅助样例页</a>
                     </div>
                 </article>
             </section>

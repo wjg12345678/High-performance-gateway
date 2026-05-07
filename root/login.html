@@ -18,17 +18,17 @@
                 <article class="hero">
                     <p class="eyebrow">Sign In</p>
                     <h1>登录 Atlas WebServer</h1>
-                    <p>登录后可进入统一控制台，继续访问图片、视频和文件管理空间，文件管理页会自动复用当前会话。</p>
+                    <p>登录后进入鉴权文件服务控制台，继续访问文件管理、公开分享和操作审计能力，浏览器会自动复用当前会话。</p>
                     <div class="center-actions">
-                        <a class="link-button secondary" href="./register.html">去注册</a>
-                        <a class="link-button secondary" href="./index.html">返回入口</a>
+                        <a class="link-button secondary" href="/register">去注册</a>
+                        <a class="link-button secondary" href="/">返回入口</a>
                     </div>
                 </article>
 
                 <article class="card">
                     <p class="kicker">Account Access</p>
                     <h2>账号登录</h2>
-                    <form id="login-form" class="stack" action="2CGISQL.cgi" method="post">
+                    <form id="login-form" class="stack" action="/login" method="post">
                         <div>
                             <label for="login-user">用户名</label>
                             <input id="login-user" type="text" name="user" placeholder="请输入用户名" required="required">
@@ -92,7 +92,7 @@
 
                         sessionStorage.setItem("tws_demo_token", data.token);
                         sessionStorage.setItem("tws_demo_user", username);
-                        window.location.href = data.target || "/welcome.html";
+                        window.location.href = data.target || "/welcome";
                     } catch (error) {
                         setStatus("登录未完成: " + error.message, true);
                     }

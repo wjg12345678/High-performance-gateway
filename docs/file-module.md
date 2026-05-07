@@ -9,7 +9,8 @@
 - `POST /api/login`
   - 登录成功后返回会话 `token`
 - `POST /api/private/logout`
-  - 使当前 Bearer Token 失效
+  - 默认使当前 Bearer Token 失效
+  - `{"scope":"all"}` 可使当前用户全会话失效
 - `POST /api/private/files`
   - 需要 `Authorization: Bearer <token>`
   - 当前主路径使用 JSON 请求体
@@ -41,14 +42,17 @@
 
 ## 安全改造
 
-- 密码不再以明文形式写库，而是存成 `SHA-256(salt + password)` 的十六进制摘要
-- 为兼容旧数据，若用户记录没有 `passwd_salt`，登录时仍允许按旧明文校验，并在成功后自动升级为哈希存储
+- 密码改为 `PBKDF2-HMAC-SHA256` 存储，服务端使用安全随机盐和固定迭代参数
+- 为兼容旧数据，若用户仍是旧明文或旧 `SHA-256(salt + password)` 记录，登录成功后会自动升级为 PBKDF2
 - 登录态不再只存在进程内存里，服务重启后只要 `user_sessions` 未过期，Bearer Token 仍可继续使用
+- 会话采用滑动过期刷新，接近过期时自动续期
+- 新登录会吊销同用户旧会话，`logout` 也支持当前会话或全会话两种主动失效路径
 
 ## 页面流程
 
 - 登录成功后进入欢迎页
-- 欢迎页提供 `看照片`、`看视频`、`文件管理台` 三个入口
+- 欢迎页优先提供 `文件管理台` 与 `公开分享` 入口
+- 静态媒体页保留为辅助样例，不再作为默认主入口
 - 文件管理页直接复用当前登录态，不再内嵌二次登录表单
 
 ## 存储说明
@@ -65,11 +69,11 @@
 - 认证链路: [scripts/test_auth.sh](../scripts/test_auth.sh)
 - 私有接口链路: [scripts/test_private_api.sh](../scripts/test_private_api.sh)
 - 文件链路: [scripts/test_files.sh](../scripts/test_files.sh)
-- 兼容旧入口: [scripts/test_file_workflow.sh](../scripts/test_file_workflow.sh)
+- 文件流程回归入口: [scripts/test_file_workflow.sh](../scripts/test_file_workflow.sh)
 
 ## 当前限制
 
 - 当前前端仅保留 `64 KB` 以内的小文件上传
 - 前端页面与后端接口都按同一限制拦截大文件
 - 当前实现不是大文件传输方案
-- 会话有效期当前固定为 7 天，未做刷新机制
+- 会话有效期仍为 7 天，但已补滑动刷新

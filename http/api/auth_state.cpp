@@ -4,7 +4,7 @@ namespace
 {
 locker g_auth_cache_lock;
 std::map<std::string, std::string> g_auth_users;
-std::map<std::string, std::string> g_auth_sessions;
+std::map<std::string, AuthSessionCacheEntry> g_auth_sessions;
 }
 
 locker &auth_cache_lock()
@@ -17,7 +17,7 @@ std::map<std::string, std::string> &auth_user_cache()
     return g_auth_users;
 }
 
-std::map<std::string, std::string> &auth_session_cache()
+std::map<std::string, AuthSessionCacheEntry> &auth_session_cache()
 {
     return g_auth_sessions;
 }

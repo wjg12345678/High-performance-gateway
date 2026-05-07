@@ -62,7 +62,7 @@ public:
     int https_enable;
     string https_cert_file;
     string https_key_file;
-    string auth_token;
+    int legacy_compat;
 
     //数据库配置
     string db_host;

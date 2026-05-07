@@ -7,6 +7,8 @@ using namespace std;
 
 namespace
 {
+const int kSessionTtlSeconds = 7 * 24 * 3600;
+
 void copy_route_target(char *target, const char *path, size_t capacity)
 {
     if (capacity == 0)
@@ -23,6 +25,12 @@ struct JsonResponseSpec
     const char *title;
     const char *body;
 };
+
+bool is_truthy_value(const string &value)
+{
+    return value == "1" || value == "true" || value == "TRUE" ||
+           value == "yes" || value == "on";
+}
 }
 
 HttpConnection::HTTP_CODE HttpConnection::route_api_login()
@@ -59,27 +67,32 @@ HttpConnection::HTTP_CODE HttpConnection::handle_auth_request(bool is_register, 
     bool success = false;
     if (is_register)
     {
-        string password_salt = make_password_salt();
-        string password_hash = hash_password(password, password_salt);
+        const string password_record = make_password_record(password);
+        if (password_record.empty())
+        {
+            return api_mode
+                       ? respond_json_error(500, "Internal Error", "failed to prepare password hash")
+                       : INTERNAL_ERROR;
+        }
+
         const string sql_insert = "INSERT INTO user(username, passwd, passwd_salt) VALUES('" +
                                   escape_sql_value(name) + "', '" +
-                                  escape_sql_value(password_hash) + "', '" +
-                                  escape_sql_value(password_salt) + "')";
+                                  escape_sql_value(password_record) + "', '')";
 
         map<string, string> &user_cache = auth_user_cache();
         locker &cache_lock = auth_cache_lock();
+        cache_lock.lock();
         if (user_cache.find(name) == user_cache.end())
         {
-            cache_lock.lock();
             int res = mysql_query(mysql, sql_insert.c_str());
             if (!res)
             {
-                user_cache.insert(pair<string, string>(name, password_hash));
+                user_cache[name] = password_record;
                 success = true;
                 write_operation_log(name, "register", "user", 0, "register success");
             }
-            cache_lock.unlock();
         }
+        cache_lock.unlock();
 
         if (api_mode)
         {
@@ -90,7 +103,7 @@ HttpConnection::HTTP_CODE HttpConnection::handle_auth_request(bool is_register, 
             return MEMORY_REQUEST;
         }
 
-        copy_route_target(m_url, success ? "/login.html" : "/register-error.html", READ_BUFFER_INITIAL_SIZE);
+        copy_route_target(m_url, success ? "/login" : "/register-error", READ_BUFFER_INITIAL_SIZE);
         return do_request();
     }
 
@@ -99,15 +112,24 @@ HttpConnection::HTTP_CODE HttpConnection::handle_auth_request(bool is_register, 
     {
         if (success)
         {
-            string token = make_session_token(name);
-            if (!persist_session(token, name, 7 * 24 * 3600))
+            const string token = make_session_token(name);
+            if (token.empty())
             {
-                return INTERNAL_ERROR;
+                return respond_json_error(500, "Internal Error", "failed to issue session");
+            }
+            if (!persist_session(token, name, kSessionTtlSeconds))
+            {
+                return respond_json_error(500, "Internal Error", "failed to persist session");
+            }
+            if (!remove_user_sessions(name, token))
+            {
+                remove_session(token);
+                return respond_json_error(500, "Internal Error", "failed to revoke previous sessions");
             }
             m_current_user = name;
             write_operation_log(name, "login", "user", 0, "login success");
 
-            string response = string("{\"code\":0,\"message\":\"login success\",\"target\":\"/welcome.html\",\"token\":\"") +
+            string response = string("{\"code\":0,\"message\":\"login success\",\"target\":\"/welcome\",\"token\":\"") +
                               json_escape(token) + "\",\"expires_in\":604800}";
             set_memory_response(200, "OK", response, "application/json");
         }
@@ -121,13 +143,13 @@ HttpConnection::HTTP_CODE HttpConnection::handle_auth_request(bool is_register, 
         return MEMORY_REQUEST;
     }
 
-    copy_route_target(m_url, success ? "/welcome.html" : "/login-error.html", READ_BUFFER_INITIAL_SIZE);
+    copy_route_target(m_url, success ? "/welcome" : "/login-error", READ_BUFFER_INITIAL_SIZE);
     return do_request();
 }
 
 HttpConnection::HTTP_CODE HttpConnection::handle_logout_request()
 {
-    string token = extract_bearer_token();
+    const string token = extract_bearer_token();
     if (token.empty())
     {
         set_memory_response(400, "Bad Request",
@@ -136,13 +158,26 @@ HttpConnection::HTTP_CODE HttpConnection::handle_logout_request()
         return MEMORY_REQUEST;
     }
 
-    remove_session(token);
-    if (!m_current_user.empty() && m_current_user != "admin")
+    const bool logout_all = request_value("scope") == "all" ||
+                            is_truthy_value(request_value("all_sessions"));
+    const bool removed = logout_all ? remove_user_sessions(m_current_user, "")
+                                    : remove_session(token);
+    if (!removed)
     {
-        write_operation_log(m_current_user, "logout", "user", 0, "logout success");
+        return respond_json_error(500, "Internal Error", "failed to invalidate session");
     }
-    set_memory_response(200, "OK",
-                        "{\"code\":0,\"message\":\"logout success\"}",
-                        "application/json");
+
+    if (!m_current_user.empty())
+    {
+        write_operation_log(m_current_user,
+                            logout_all ? "logout_all" : "logout",
+                            "user", 0,
+                            logout_all ? "all sessions revoked" : "logout success");
+    }
+
+    const string response = logout_all
+                                ? "{\"code\":0,\"message\":\"logout success\",\"scope\":\"all\"}"
+                                : "{\"code\":0,\"message\":\"logout success\",\"scope\":\"current\"}";
+    set_memory_response(200, "OK", response, "application/json");
     return MEMORY_REQUEST;
 }

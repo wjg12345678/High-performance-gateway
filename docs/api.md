@@ -50,7 +50,7 @@
 
 ### `POST /api/login`
 
-用户登录并获取会话 Token。
+用户登录并获取会话 Token。登录成功后会吊销同一用户的旧会话，只保留当前新签发的 Token。
 
 请求体：
 
@@ -67,7 +67,7 @@
 {
   "code": 0,
   "message": "login success",
-  "target": "/welcome.html",
+  "target": "/welcome",
   "token": "token-string",
   "expires_in": 604800
 }
@@ -75,7 +75,7 @@
 
 ### `POST /api/private/logout`
 
-使当前 Bearer Token 失效。
+使 Bearer Token 失效。默认仅注销当前 Token；若请求体携带 `{"scope":"all"}` 或 `{"all_sessions":true}`，则注销当前用户全部会话。
 
 请求头：
 
@@ -86,7 +86,7 @@ Authorization: Bearer <token>
 成功响应：
 
 ```json
-{"code":0,"message":"logout success"}
+{"code":0,"message":"logout success","scope":"current"}
 ```
 
 ## Private APIs
@@ -270,12 +270,17 @@ Authorization: Bearer <token>
 ## Static Pages
 
 - `GET /`
-- `GET /index.html`
-- `GET /login.html`
-- `GET /register.html`
-- `GET /welcome.html`
-- `GET /files.html`
-- `GET /share.html`
+- `GET /login`
+- `GET /register`
+- `GET /welcome`
+- `GET /files`
+- `GET /share`
+- `GET /media`
+
+兼容说明：
+
+- 历史教学路由 `/0`、`/1`、`/2CGISQL.cgi`、`/3CGISQL.cgi`、`/5`、`/6`、`/7` 默认关闭
+- 仅在 `legacy_compat=1` 或 `TWS_LEGACY_COMPAT=1` 时恢复
 
 ## Error Semantics
 

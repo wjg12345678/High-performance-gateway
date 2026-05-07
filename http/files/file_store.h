@@ -7,7 +7,7 @@
 
 namespace http_file_store
 {
-bool fetch_file_record(MYSQL *mysql, long file_id, ManagedFileRecord &record);
+bool fetch_file_record(MYSQL *mysql, long file_id, ManagedFileRecord &record, bool include_deleted = false);
 }
 
 #endif

@@ -203,6 +203,70 @@ string HttpConnection::request_value(const string &primary, const string &fallba
     return "";
 }
 
+string HttpConnection::query_value(const string &key) const
+{
+    if (m_query_string == nullptr || key.empty())
+    {
+        return "";
+    }
+
+    const string query = m_query_string;
+    size_t start = 0;
+    while (start <= query.size())
+    {
+        size_t end = query.find('&', start);
+        string item = query.substr(start, end == string::npos ? string::npos : end - start);
+        if (!item.empty())
+        {
+            size_t eq = item.find('=');
+            string item_key = url_decode(item.substr(0, eq));
+            if (item_key == key)
+            {
+                return eq == string::npos ? "" : url_decode(item.substr(eq + 1));
+            }
+        }
+
+        if (end == string::npos)
+        {
+            break;
+        }
+        start = end + 1;
+    }
+
+    return "";
+}
+
+long HttpConnection::query_long_value(const string &key, long fallback, long minimum, long maximum) const
+{
+    const string raw = trim_copy(query_value(key));
+    if (raw.empty())
+    {
+        return fallback;
+    }
+
+    char *endptr = nullptr;
+    long value = strtol(raw.c_str(), &endptr, 10);
+    if (endptr == raw.c_str() || (endptr != nullptr && *endptr != '\0'))
+    {
+        return fallback;
+    }
+    if (value < minimum)
+    {
+        return minimum;
+    }
+    if (value > maximum)
+    {
+        return maximum;
+    }
+    return value;
+}
+
+bool HttpConnection::query_truthy_value(const string &key) const
+{
+    const string value = query_value(key);
+    return value == "1" || value == "true" || value == "TRUE" || value == "yes" || value == "on";
+}
+
 string HttpConnection::escape_sql_value(const string &value) const
 {
     if (mysql == nullptr)
@@ -228,7 +292,7 @@ void HttpConnection::set_memory_response(int status, const char *title, const st
 
 bool HttpConnection::has_user_session() const
 {
-    return !m_current_user.empty() && m_current_user != "admin";
+    return !m_current_user.empty();
 }
 
 HttpConnection::HTTP_CODE HttpConnection::respond_json_error(int status, const char *title, const string &message)

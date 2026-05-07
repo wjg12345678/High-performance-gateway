@@ -13,6 +13,7 @@ using namespace std;
 namespace
 {
 const size_t kManagedUploadLimitBytes = 64 * 1024;
+const size_t kStoredNamePrefixLength = 24;
 
 bool ends_with_ignore_case(const string &value, const string &suffix)
 {
@@ -223,7 +224,13 @@ HttpConnection::HTTP_CODE HttpConnection::handle_file_upload()
         return INTERNAL_ERROR;
     }
 
-    string stored_name = make_session_token(m_current_user) + "_" + payload.filename;
+    const string stored_name_prefix = make_session_token(m_current_user);
+    if (stored_name_prefix.empty())
+    {
+        return INTERNAL_ERROR;
+    }
+
+    string stored_name = stored_name_prefix.substr(0, kStoredNamePrefixLength) + "_" + payload.filename;
     string disk_path = http_file_helpers::build_file_disk_path(doc_root, stored_name);
 
     ofstream out(disk_path.c_str(), ios::out | ios::binary | ios::trunc);

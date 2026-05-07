@@ -139,6 +139,17 @@ HttpConnection::HTTP_CODE HttpConnection::parse_headers(char *text)
         }
         if (m_content_length != 0)
         {
+            if (starts_with_ignore_case_local(m_content_type, "multipart/form-data"))
+            {
+                if (m_content_length > static_cast<long>(m_upload_max_bytes + m_upload_request_overhead_bytes))
+                {
+                    return PAYLOAD_TOO_LARGE;
+                }
+                if (!begin_streamed_body_capture())
+                {
+                    return INTERNAL_ERROR;
+                }
+            }
             m_check_state = CHECK_STATE_CONTENT;
             m_body_start_idx = m_checked_idx;
             return NO_REQUEST;
@@ -209,6 +220,29 @@ HttpConnection::HTTP_CODE HttpConnection::parse_content(char *text)
         return NOT_IMPLEMENTED;
     }
     (void)text;
+    if (m_stream_body_file != nullptr)
+    {
+        const long available = m_read_idx - m_body_start_idx;
+        if (available > 0)
+        {
+            if (!append_streamed_body_chunk(m_read_buf.data() + m_body_start_idx, static_cast<size_t>(available)))
+            {
+                if (m_body_parse_error_status == 413)
+                {
+                    return PAYLOAD_TOO_LARGE;
+                }
+                return INTERNAL_ERROR;
+            }
+            reset_streamed_body_buffer();
+        }
+
+        if (m_stream_body_bytes_received >= m_content_length)
+        {
+            return GET_REQUEST;
+        }
+        return NO_REQUEST;
+    }
+
     if (m_read_idx >= (m_body_start_idx + m_content_length))
     {
         m_read_buf[m_body_start_idx + m_content_length] = '\0';
@@ -524,14 +558,14 @@ HttpConnection::HTTP_CODE HttpConnection::process_read()
         case CHECK_STATE_REQUESTLINE:
         {
             ret = parse_request_line(text);
-            if (ret == BAD_REQUEST || ret == NOT_IMPLEMENTED)
+            if (ret == BAD_REQUEST || ret == NOT_IMPLEMENTED || ret == PAYLOAD_TOO_LARGE || ret == INTERNAL_ERROR)
                 return ret;
             break;
         }
         case CHECK_STATE_HEADER:
         {
             ret = parse_headers(text);
-            if (ret == BAD_REQUEST || ret == NOT_IMPLEMENTED)
+            if (ret == BAD_REQUEST || ret == NOT_IMPLEMENTED || ret == PAYLOAD_TOO_LARGE || ret == INTERNAL_ERROR)
                 return ret;
             else if (ret == GET_REQUEST)
             {
@@ -542,7 +576,7 @@ HttpConnection::HTTP_CODE HttpConnection::process_read()
         case CHECK_STATE_CONTENT:
         {
             ret = parse_content(text);
-            if (ret == NOT_IMPLEMENTED)
+            if (ret == NOT_IMPLEMENTED || ret == PAYLOAD_TOO_LARGE || ret == INTERNAL_ERROR)
                 return ret;
             if (ret == GET_REQUEST)
                 return do_request();

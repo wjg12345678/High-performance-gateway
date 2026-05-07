@@ -139,27 +139,32 @@ flowchart TD
 ```mermaid
 flowchart TD
     Login[POST /api/login]
-    Hash[密码校验<br/>salt + hash]
+    Hash[密码校验<br/>PBKDF2 / 旧口令升级]
     Session[生成 token]
     Persist[写入 user_sessions]
+    Revoke[吊销旧会话]
     Access[访问 /api/private/*]
-    Lookup[lookup_session]
+    Lookup[lookup_session<br/>cache + DB]
+    Refresh[接近过期自动刷新]
     Allow[通过]
     Deny[401]
 
     Login --> Hash
     Hash --> Session
     Session --> Persist
-    Persist --> Access
+    Persist --> Revoke
+    Revoke --> Access
     Access --> Lookup
-    Lookup -->|token valid| Allow
+    Lookup -->|token valid| Refresh
+    Refresh --> Allow
     Lookup -->|token missing/expired| Deny
 ```
 
 说明：
 
-- 密码以带盐哈希形式存储
-- token 会写入 `user_sessions`
+- 密码使用 `PBKDF2-HMAC-SHA256` 和安全随机盐存储
+- token 会写入 `user_sessions`，并在接近过期时做滑动刷新
+- 新登录默认吊销同用户旧会话
 - 私有接口统一通过 `middleware_auth()` 做 Bearer Token 校验
 
 ## 超时回收

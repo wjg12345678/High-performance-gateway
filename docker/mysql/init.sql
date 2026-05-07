@@ -44,8 +44,8 @@ CREATE TABLE IF NOT EXISTS operation_logs (
 
 INSERT INTO user(username, passwd, passwd_salt)
 SELECT 'name',
-       SHA2(CONCAT('seed-salt', 'passwd'), 256),
-       'seed-salt'
+       'pbkdf2_sha256$210000$5f0b5c0e6f4d9a71c2e84f10aa7d3912$69b9ececeda544f749543a4b941fd186bb779d96d9c54ff0dbb09294a7fe4108',
+       ''
 WHERE NOT EXISTS (
     SELECT 1 FROM user WHERE username = 'name'
 );

@@ -5,18 +5,20 @@
 
 namespace http_file_store
 {
-bool fetch_file_record(MYSQL *mysql, long file_id, ManagedFileRecord &record)
+bool fetch_file_record(MYSQL *mysql, long file_id, ManagedFileRecord &record, bool include_deleted)
 {
     if (mysql == nullptr)
     {
         return false;
     }
 
-    char query[512];
+    char query[768];
     snprintf(query, sizeof(query),
-             "SELECT owner_username, stored_name, original_name, content_type, file_size, is_public "
-             "FROM files WHERE id=%ld LIMIT 1",
-             file_id);
+             "SELECT owner_username, stored_name, original_name, content_type, file_size, is_public, "
+             "COALESCE(content_sha256, ''), COALESCE(DATE_FORMAT(deleted_at, '%%Y-%%m-%%d %%H:%%i:%%s'), '') "
+             "FROM files WHERE id=%ld%s LIMIT 1",
+             file_id,
+             include_deleted ? "" : " AND deleted_at IS NULL");
     if (mysql_query(mysql, query) != 0)
     {
         return false;
@@ -42,6 +44,9 @@ bool fetch_file_record(MYSQL *mysql, long file_id, ManagedFileRecord &record)
     record.content_type = row[3] ? row[3] : "application/octet-stream";
     record.file_size = row[4] ? atol(row[4]) : 0;
     record.is_public = row[5] ? atoi(row[5]) != 0 : false;
+    record.content_sha256 = row[6] ? row[6] : "";
+    record.deleted_at = row[7] ? row[7] : "";
+    record.is_deleted = !record.deleted_at.empty();
     mysql_free_result(result);
     return true;
 }

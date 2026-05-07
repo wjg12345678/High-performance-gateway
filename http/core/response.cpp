@@ -16,6 +16,8 @@ const char *kError403Title = "Forbidden";
 const char *kError403Form = "You do not have permission to get file form this server.\n";
 const char *kError404Title = "Not Found";
 const char *kError404Form = "The requested file was not found on this server.\n";
+const char *kError413Title = "Payload Too Large";
+const char *kError413Form = "The request payload exceeds the configured upload limit.\n";
 const char *kError501Title = "Not Implemented";
 const char *kError501Form = "The requested HTTP feature is not implemented.\n";
 const char *kError500Title = "Internal Error";
@@ -168,6 +170,14 @@ bool HttpConnection::process_write(HTTP_CODE ret)
         add_status_line(501, kError501Title);
         add_headers(strlen(kError501Form), "text/plain");
         if (!add_content(kError501Form))
+            return false;
+        break;
+    }
+    case PAYLOAD_TOO_LARGE:
+    {
+        add_status_line(413, kError413Title);
+        add_headers(strlen(kError413Form), "text/plain");
+        if (!add_content(kError413Form))
             return false;
         break;
     }

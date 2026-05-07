@@ -256,7 +256,7 @@ int run_server_process(const Config &config)
                 config.log_split_lines, config.log_queue_size,
                 config.threadpool_queue_mode,
                 config.https_enable, config.https_cert_file, config.https_key_file,
-                config.auth_token);
+                config.legacy_compat);
 
     //日志
     server.log_write();

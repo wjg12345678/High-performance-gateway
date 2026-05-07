@@ -4,6 +4,7 @@
 #include <sys/epoll.h>
 #include <netinet/in.h>
 #include <sys/stat.h>
+#include <cstdio>
 #include <ctime>
 #include <map>
 #include <string>
@@ -62,6 +63,7 @@ public:
         CLOSED_CONNECTION,
         OPTIONS_REQUEST,
         NOT_IMPLEMENTED,
+        PAYLOAD_TOO_LARGE,
         MEMORY_REQUEST
     };
     enum LINE_STATUS
@@ -74,7 +76,7 @@ public:
     using RouteHandler = HTTP_CODE (HttpConnection::*)();
 
 public:
-    HttpConnection() : mysql(nullptr), m_state(0), timer_flag(0), improv(0), m_epollfd(-1), m_sockfd(-1), m_last_active(0), m_ssl(nullptr), m_https_enabled(false), m_tls_handshake_done(true), m_tls_want_event(EPOLLIN), m_file_send_offset(0), m_file_send_size(0) {}
+    HttpConnection() : mysql(nullptr), m_state(0), timer_flag(0), improv(0), m_epollfd(-1), m_sockfd(-1), m_last_active(0), m_ssl(nullptr), m_https_enabled(false), m_tls_handshake_done(true), m_tls_want_event(EPOLLIN), m_file_send_offset(0), m_file_send_size(0), m_body_parse_error_status(0), m_stream_body_file(nullptr), m_stream_body_bytes_received(0), m_upload_tmp_size(0) {}
     ~HttpConnection() {}
     void lock_request() { m_request_lock.lock(); }
     void unlock_request() { m_request_lock.unlock(); }
@@ -83,7 +85,8 @@ public:
     // Public lifecycle and socket state.
     void init(int epollfd, int sockfd, const sockaddr_in &addr, const string &root, int trig_mode, int close_log);
     static void configure_tls(SSL_CTX *ssl_ctx, bool https_enabled);
-    static void set_auth_token(const string &auth_token);
+    static void configure_uploads(size_t upload_max_bytes);
+    static void set_legacy_compat(bool enabled);
     void close_conn(bool real_close = true);
     void process();
     bool read_once();
@@ -116,6 +119,12 @@ private:
         string filename;
         string content;
         string content_type;
+        string temp_path;
+        string sha256;
+        long size;
+        bool use_temp_file;
+
+        ManagedUploadPayload() : size(0), use_temp_file(false) {}
     };
 
     // Core protocol and connection handling.
@@ -170,6 +179,7 @@ private:
     bool parse_form_urlencoded(const string &body);
     bool parse_json_body(const string &body);
     bool parse_multipart_form_data(const string &body);
+    bool parse_multipart_form_data_from_file();
 
     // Shared utility helpers.
     string url_decode(const string &value) const;
@@ -178,6 +188,9 @@ private:
     bool decode_base64(const string &input, string &output) const;
     string header_param_value(const string &header_line, const string &key) const;
     string request_value(const string &primary, const string &fallback = "") const;
+    string query_value(const string &key) const;
+    long query_long_value(const string &key, long fallback, long minimum, long maximum) const;
+    bool query_truthy_value(const string &key) const;
     string escape_sql_value(const string &value) const;
     void set_memory_response(int status, const char *title, const string &body, const char *content_type);
     bool has_user_session() const;
@@ -192,17 +205,20 @@ private:
     string make_session_token(const string &username) const;
     string make_password_salt() const;
     string hash_password(const string &password, const string &salt) const;
+    string make_password_record(const string &password) const;
     string extract_bearer_token() const;
     bool lookup_session(const string &token, string &username);
     bool persist_session(const string &token, const string &username, int ttl_seconds);
+    bool refresh_session(const string &token, const string &username, int ttl_seconds);
     bool remove_session(const string &token);
+    bool remove_user_sessions(const string &username, const string &except_token);
     bool verify_user_password(const string &username, const string &password);
     bool update_user_password_hash(const string &username, const string &password);
     HTTP_CODE handle_auth_request(bool is_register, bool api_mode);
     HTTP_CODE handle_logout_request();
 
     // File service helpers and handlers.
-    HTTP_CODE load_owned_file_record(long file_id, ManagedFileRecord &record);
+    HTTP_CODE load_owned_file_record(long file_id, ManagedFileRecord &record, bool include_deleted = false);
     bool write_operation_log(const string &username, const string &action, const string &resource_type,
                              long resource_id, const string &detail);
     HTTP_CODE handle_file_upload();
@@ -213,12 +229,18 @@ private:
     HTTP_CODE handle_public_file_download(const char *path);
     HTTP_CODE handle_file_delete(const char *path);
     HTTP_CODE handle_file_visibility_update(const char *path);
+    HTTP_CODE handle_file_restore(const char *path);
     HTTP_CODE handle_operation_list();
     HTTP_CODE handle_operation_delete(const char *path);
     bool open_managed_file(const string &path, const string &content_type, const string &download_name);
     bool parse_managed_upload_payload(ManagedUploadPayload &payload, int &status, const char *&title, string &message);
-    string build_file_list_json(MYSQL_RES *result) const;
+    string build_file_list_json(MYSQL_RES *result, long next_cursor, int limit, bool include_deleted) const;
     string build_operation_list_json(MYSQL_RES *result) const;
+    string ensure_unique_owned_filename(const string &requested_name, long ignore_file_id = 0);
+    bool begin_streamed_body_capture();
+    bool append_streamed_body_chunk(const char *data, size_t len);
+    void reset_streamed_body_buffer();
+    void cleanup_temp_upload_state();
 
     // Static resource resolution and response writing.
     bool resolve_static_path(const char *route_path);
@@ -301,12 +323,25 @@ private:
     map<string, string> m_json_data;
     string m_authorization;
     string m_current_user;
+    int m_body_parse_error_status;
+    string m_body_parse_error_title;
+    string m_body_parse_error_message;
+    FILE *m_stream_body_file;
+    string m_stream_body_tmp_path;
+    long m_stream_body_bytes_received;
+    string m_upload_tmp_path;
+    string m_upload_tmp_filename;
+    string m_upload_tmp_content_type;
+    string m_upload_tmp_sha256;
+    long m_upload_tmp_size;
 
     locker m_request_lock;
 
     static SSL_CTX *m_ssl_ctx;
     static bool m_tls_enabled;
-    static string m_auth_token;
+    static bool m_legacy_compat_enabled;
+    static size_t m_upload_max_bytes;
+    static size_t m_upload_request_overhead_bytes;
 };
 
 #endif

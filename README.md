@@ -6,7 +6,17 @@
 ![Database](https://img.shields.io/badge/Database-MySQL%208-2563eb)
 ![License](https://img.shields.io/badge/License-MIT-15803d)
 
-Atlas WebServer 是一个基于 C++、Linux `epoll` 和 MySQL 的工程化 Web 服务项目。它实现了 `Main Reactor + Multi-SubReactor + Thread Pool` 并发模型，并提供 HTTP/1.1、静态资源、JSON API、Bearer Token 鉴权、文件管理、操作审计、Docker Compose 部署、脚本化测试和性能报告产物。
+Atlas WebServer 是一个基于 C++、Linux `epoll` 和 MySQL 的鉴权文件服务项目。它的默认对外形态不是教学 CGI 演示页，而是围绕账号登录、Bearer Token 会话、私有文件管理、公开分享和操作审计组织起来的完整业务闭环。
+
+默认入口：
+
+- `GET /`：服务首页
+- `GET /login`、`GET /register`：账号入口
+- `GET /files`：文件管理台
+- `GET /share`：公开文件页
+- `POST /api/...`：程序化接口
+
+历史 `/0`、`/1`、`/2CGISQL.cgi`、`/3CGISQL.cgi`、`/5`、`/6`、`/7` 等教学遗留路由已默认关闭；仅在显式开启 `legacy_compat` 后才恢复。
 
 ## 核心看点
 
@@ -109,7 +119,7 @@ flowchart LR
 | 分组 | 接口 |
 | --- | --- |
 | 健康检查 | `GET /healthz` |
-| 页面入口 | `GET /`、`/login.html`、`/register.html`、`/welcome.html`、`/files.html`、`/share.html` |
+| 页面入口 | `GET /`、`/login`、`/register`、`/welcome`、`/files`、`/share`、`/media` |
 | 认证 | `POST /api/register`、`POST /api/login` |
 | 私有接口 | `GET /api/private/ping`、`POST /api/private/logout`、`GET /api/private/operations`、`DELETE /api/private/operations/:id` |
 | 文件接口 | `GET /api/private/files`、`POST /api/private/files`、`GET /api/private/files/:id/download`、`DELETE /api/private/files/:id`、`POST /api/private/files/:id/visibility` |
@@ -132,6 +142,7 @@ flowchart LR
 | `sql_num` | `TWS_SQL_NUM` | `8` | MySQL 连接池大小 |
 | `conn_timeout` | `TWS_CONN_TIMEOUT` | `15` | HTTP 空闲连接超时秒数 |
 | `https_enable` | `TWS_HTTPS_ENABLE` | `0` | 是否启用 HTTPS |
+| `legacy_compat` | `TWS_LEGACY_COMPAT` | `0` | 是否恢复旧教学路由 `/0` `/1` `/2CGISQL.cgi` 等 |
 | `db_host` | `TWS_DB_HOST` | `127.0.0.1` | 数据库主机 |
 | `db_port` | `TWS_DB_PORT` | `3306` | 数据库端口 |
 | `db_user` | `TWS_DB_USER` | `root` | 数据库用户名 |
@@ -161,7 +172,7 @@ TWS_LOG_WRITE=0 TWS_THREADPOOL_QUEUE_MODE=mutex docker compose up -d --build
 | `./scripts/test_auth.sh` | 注册、登录、登出 |
 | `./scripts/test_private_api.sh` | Bearer Token 鉴权链路 |
 | `./scripts/test_files.sh` | 文件上传、列表、下载、删除 |
-| `./scripts/test_file_workflow.sh` | 兼容旧入口的文件流程 |
+| `./scripts/test_file_workflow.sh` | 文件流程回归入口 |
 
 ## 性能摘要
 

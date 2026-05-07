@@ -15,15 +15,15 @@
                     <h1>登录未通过</h1>
                     <p>本次登录信息未通过校验，请更新账号信息后再次提交，或前往注册页创建新账号。</p>
                     <div class="center-actions">
-                        <a class="link-button secondary" href="./register.html">去注册</a>
-                        <a class="link-button secondary" href="./index.html">返回入口</a>
+                        <a class="link-button secondary" href="/register">去注册</a>
+                        <a class="link-button secondary" href="/">返回入口</a>
                     </div>
                 </article>
 
                 <article class="card">
                     <p class="kicker">Retry</p>
                     <h2>再次登录</h2>
-                    <form class="stack" action="2CGISQL.cgi" method="post">
+                    <form class="stack" action="/login" method="post">
                         <div>
                             <label for="login-user">用户名</label>
                             <input id="login-user" type="text" name="user" placeholder="请输入用户名" required="required">

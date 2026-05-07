@@ -8,6 +8,7 @@
 #include <openssl/ssl.h>
 #include <openssl/evp.h>
 #include <openssl/err.h>
+#include <openssl/rand.h>
 #include <unistd.h>
 
 #include "../../CGImysql/sql_connection_pool.h"
@@ -15,7 +16,9 @@
 
 SSL_CTX *HttpConnection::m_ssl_ctx = nullptr;
 bool HttpConnection::m_tls_enabled = false;
-string HttpConnection::m_auth_token;
+bool HttpConnection::m_legacy_compat_enabled = false;
+size_t HttpConnection::m_upload_max_bytes = 10 * 1024 * 1024;
+size_t HttpConnection::m_upload_request_overhead_bytes = 512 * 1024;
 
 namespace
 {
@@ -23,8 +26,23 @@ const char *kOk200Title = "OK";
 const char *kError400Title = "Bad Request";
 const char *kError403Title = "Forbidden";
 const char *kError404Title = "Not Found";
+const char *kError413Title = "Payload Too Large";
 const char *kError501Title = "Not Implemented";
 const char *kError500Title = "Internal Error";
+const size_t kSessionTokenBytes = 32;
+
+std::string encode_hex(const unsigned char *data, size_t len)
+{
+    static const char kHexChars[] = "0123456789abcdef";
+    std::string hex;
+    hex.reserve(len * 2);
+    for (size_t i = 0; i < len; ++i)
+    {
+        hex.push_back(kHexChars[(data[i] >> 4) & 0x0F]);
+        hex.push_back(kHexChars[data[i] & 0x0F]);
+    }
+    return hex;
+}
 }
 
 void HttpConnection::initmysql_result(connection_pool *connPool)
@@ -113,9 +131,18 @@ void HttpConnection::configure_tls(SSL_CTX *ssl_ctx, bool https_enabled)
     m_tls_enabled = https_enabled && ssl_ctx != nullptr;
 }
 
-void HttpConnection::set_auth_token(const string &auth_token)
+void HttpConnection::configure_uploads(size_t upload_max_bytes)
 {
-    m_auth_token = auth_token;
+    if (upload_max_bytes == 0)
+    {
+        upload_max_bytes = 10 * 1024 * 1024;
+    }
+    m_upload_max_bytes = upload_max_bytes;
+}
+
+void HttpConnection::set_legacy_compat(bool enabled)
+{
+    m_legacy_compat_enabled = enabled;
 }
 
 //关闭连接，关闭一个连接，客户总量减一
@@ -123,6 +150,7 @@ void HttpConnection::close_conn(bool real_close)
 {
     if (real_close && (m_sockfd != -1))
     {
+        cleanup_temp_upload_state();
         close_file();
         if (m_ssl != nullptr)
         {
@@ -188,6 +216,7 @@ void HttpConnection::init()
 {
     ensure_read_capacity(READ_BUFFER_INITIAL_SIZE);
     ensure_write_capacity(WRITE_BUFFER_INITIAL_SIZE);
+    cleanup_temp_upload_state();
     mysql = nullptr;
     m_has_new_data = false;
     bytes_to_send = 0;
@@ -226,6 +255,17 @@ void HttpConnection::init()
     m_json_data.clear();
     m_authorization.clear();
     m_current_user.clear();
+    m_body_parse_error_status = 0;
+    m_body_parse_error_title.clear();
+    m_body_parse_error_message.clear();
+    m_stream_body_file = nullptr;
+    m_stream_body_tmp_path.clear();
+    m_stream_body_bytes_received = 0;
+    m_upload_tmp_path.clear();
+    m_upload_tmp_filename.clear();
+    m_upload_tmp_content_type.clear();
+    m_upload_tmp_sha256.clear();
+    m_upload_tmp_size = 0;
 
     memset(m_real_file, '\0', FILENAME_LEN);
     memset(m_content_type, '\0', sizeof(m_content_type));
@@ -242,19 +282,44 @@ void HttpConnection::init()
     reset_ring_buffer(m_write_ring, m_write_ring_buf.data(), (int)m_write_ring_buf.size());
 }
 
+void HttpConnection::cleanup_temp_upload_state()
+{
+    if (m_stream_body_file != nullptr)
+    {
+        fclose(m_stream_body_file);
+        m_stream_body_file = nullptr;
+    }
+    if (!m_stream_body_tmp_path.empty())
+    {
+        unlink(m_stream_body_tmp_path.c_str());
+        m_stream_body_tmp_path.clear();
+    }
+    if (!m_upload_tmp_path.empty())
+    {
+        unlink(m_upload_tmp_path.c_str());
+        m_upload_tmp_path.clear();
+    }
+    m_stream_body_bytes_received = 0;
+    m_upload_tmp_filename.clear();
+    m_upload_tmp_content_type.clear();
+    m_upload_tmp_sha256.clear();
+    m_upload_tmp_size = 0;
+}
+
 
 //从状态机，用于分析出一行内容
 //返回值为行的读取状态，有LINE_OK,LINE_BAD,LINE_OPEN
 
 string HttpConnection::make_session_token(const string &username) const
 {
-    char token[128];
-    unsigned int seed = static_cast<unsigned int>(time(nullptr) ^ m_sockfd ^ static_cast<int>(username.length()));
-    snprintf(token, sizeof(token), "%08x%08x%08x",
-             static_cast<unsigned int>(time(nullptr)),
-             static_cast<unsigned int>(rand_r(&seed) ^ m_sockfd),
-             static_cast<unsigned int>(rand_r(&seed) ^ (static_cast<unsigned int>(username.length()) << 16)));
-    return token;
+    (void)username;
+
+    unsigned char token_bytes[kSessionTokenBytes];
+    if (RAND_bytes(token_bytes, sizeof(token_bytes)) != 1)
+    {
+        return "";
+    }
+    return encode_hex(token_bytes, sizeof(token_bytes));
 }
 
 const char *HttpConnection::method_name() const
@@ -329,6 +394,15 @@ HttpConnection::HTTP_CODE HttpConnection::do_request()
     {
         if (!parse_post_body())
         {
+            if (m_body_parse_error_status > 0)
+            {
+                set_memory_response(m_body_parse_error_status,
+                                    m_body_parse_error_title.empty() ? kError400Title : m_body_parse_error_title.c_str(),
+                                    string("{\"code\":") + std::to_string(m_body_parse_error_status) +
+                                        ",\"message\":\"" + json_escape(m_body_parse_error_message.empty() ? "bad request" : m_body_parse_error_message) + "\"}",
+                                    "application/json");
+                return MEMORY_REQUEST;
+            }
             return BAD_REQUEST;
         }
     }
@@ -390,6 +464,12 @@ HttpConnection::HTTP_CODE HttpConnection::run_after_middlewares(HTTP_CODE code)
         status = 501;
         title = kError501Title;
         message = "not implemented";
+    }
+    else if (code == PAYLOAD_TOO_LARGE)
+    {
+        status = 413;
+        title = kError413Title;
+        message = "payload too large";
     }
 
     char body[128];

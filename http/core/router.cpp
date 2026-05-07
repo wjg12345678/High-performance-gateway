@@ -85,6 +85,8 @@ const char *detect_static_content_type(const char *path)
 HttpConnection::HTTP_CODE HttpConnection::route_request()
 {
     static const RouteEntry kRoutes[] = {
+        {POST, "/login", &HttpConnection::route_page_login},
+        {POST, "/register", &HttpConnection::route_page_register},
         {POST, "/api/login", &HttpConnection::route_api_login},
         {POST, "/api/register", &HttpConnection::route_api_register},
         {POST, "/api/echo", &HttpConnection::route_api_echo},
@@ -92,6 +94,8 @@ HttpConnection::HTTP_CODE HttpConnection::route_request()
         {POST, "/api/private/logout", &HttpConnection::route_api_private_logout},
         {GET, "/healthz", &HttpConnection::route_healthz},
         {HEAD, "/healthz", &HttpConnection::route_healthz},
+    };
+    static const RouteEntry kLegacyRoutes[] = {
         {POST, "/2", &HttpConnection::route_page_login},
         {POST, "/2CGISQL.cgi", &HttpConnection::route_page_login},
         {POST, "/3", &HttpConnection::route_page_register},
@@ -113,6 +117,17 @@ HttpConnection::HTTP_CODE HttpConnection::route_request()
         if (route_matches(kRoutes[i], m_method, m_url))
         {
             return (this->*kRoutes[i].handler)();
+        }
+    }
+
+    if (m_legacy_compat_enabled)
+    {
+        for (size_t i = 0; i < sizeof(kLegacyRoutes) / sizeof(kLegacyRoutes[0]); ++i)
+        {
+            if (route_matches(kLegacyRoutes[i], m_method, m_url))
+            {
+                return (this->*kLegacyRoutes[i].handler)();
+            }
         }
     }
 
@@ -207,15 +222,37 @@ bool HttpConnection::resolve_static_path(const char *route_path)
 {
     const char *target = route_path;
 
-    if (strcmp(route_path, "/0") == 0)
-        target = "/register.html";
-    else if (strcmp(route_path, "/1") == 0)
+    if (strcmp(route_path, "/") == 0 || strcmp(route_path, "/index") == 0)
+        target = "/index.html";
+    else if (strcmp(route_path, "/login") == 0)
         target = "/login.html";
-    else if (strcmp(route_path, "/5") == 0)
+    else if (strcmp(route_path, "/register") == 0)
+        target = "/register.html";
+    else if (strcmp(route_path, "/welcome") == 0)
+        target = "/welcome.html";
+    else if (strcmp(route_path, "/files") == 0)
         target = "/files.html";
-    else if (strcmp(route_path, "/6") == 0)
+    else if (strcmp(route_path, "/share") == 0)
+        target = "/share.html";
+    else if (strcmp(route_path, "/media") == 0)
+        target = "/media.html";
+    else if (strcmp(route_path, "/media/photo") == 0)
+        target = "/media-photo.html";
+    else if (strcmp(route_path, "/media/video") == 0)
+        target = "/media-video.html";
+    else if (strcmp(route_path, "/login-error") == 0)
+        target = "/login-error.html";
+    else if (strcmp(route_path, "/register-error") == 0)
+        target = "/register-error.html";
+    else if (m_legacy_compat_enabled && strcmp(route_path, "/0") == 0)
+        target = "/register.html";
+    else if (m_legacy_compat_enabled && strcmp(route_path, "/1") == 0)
+        target = "/login.html";
+    else if (m_legacy_compat_enabled && strcmp(route_path, "/5") == 0)
         target = "/files.html";
-    else if (strcmp(route_path, "/7") == 0)
+    else if (m_legacy_compat_enabled && strcmp(route_path, "/6") == 0)
+        target = "/files.html";
+    else if (m_legacy_compat_enabled && strcmp(route_path, "/7") == 0)
         target = "/files.html";
 
     if (target == nullptr || target[0] != '/')

@@ -46,7 +46,7 @@ public:
               int close_log, int actor_model, int log_level, int log_split_lines, int log_queue_size,
               const string &threadpool_queue_mode,
               int https_enable, const string &https_cert_file, const string &https_key_file,
-              const string &auth_token);
+              int legacy_compat);
 
     void thread_pool();
     void sql_pool();
@@ -105,7 +105,6 @@ public:
     int m_https_enable;
     string m_https_cert_file;
     string m_https_key_file;
-    string m_auth_token;
     SSL_CTX *m_ssl_ctx;
 
     int m_epollfd;

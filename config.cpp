@@ -76,7 +76,7 @@ Config::Config(){
     https_enable = 0;
     https_cert_file = "./certs/server.crt";
     https_key_file = "./certs/server.key";
-    auth_token = "";
+    legacy_compat = 0;
 
     db_host = "127.0.0.1";
     db_port = 3306;
@@ -145,7 +145,7 @@ void Config::load_file(const char *path)
         else if (key == "https_enable") https_enable = atoi(value.c_str());
         else if (key == "https_cert_file") https_cert_file = value;
         else if (key == "https_key_file") https_key_file = value;
-        else if (key == "auth_token") auth_token = value;
+        else if (key == "legacy_compat") legacy_compat = atoi(value.c_str());
         else if (key == "db_host") db_host = value;
         else if (key == "db_port") db_port = atoi(value.c_str());
         else if (key == "db_user") db_user = value;
@@ -174,6 +174,7 @@ void Config::apply_env_overrides()
     actor_model = getenv_int_value("TWS_ACTOR_MODEL", actor_model);
     daemon_mode = getenv_int_value("TWS_DAEMON_MODE", daemon_mode);
     https_enable = getenv_int_value("TWS_HTTPS_ENABLE", https_enable);
+    legacy_compat = getenv_int_value("TWS_LEGACY_COMPAT", legacy_compat);
     db_port = getenv_int_value("TWS_DB_PORT", db_port);
     conn_timeout = getenv_int_value("TWS_CONN_TIMEOUT", conn_timeout);
     threadpool_max_threads = getenv_int_value("TWS_THREADPOOL_MAX_THREADS", threadpool_max_threads);
@@ -188,8 +189,6 @@ void Config::apply_env_overrides()
     if (value) https_cert_file = value;
     value = getenv_value("TWS_HTTPS_KEY_FILE");
     if (value) https_key_file = value;
-    value = getenv_value("TWS_AUTH_TOKEN");
-    if (value) auth_token = value;
     value = getenv_value("TWS_DB_HOST");
     if (value) db_host = value;
     value = getenv_value("TWS_DB_USER");
