@@ -14,6 +14,12 @@ void HttpConnection::reset_request_parser_state()
     m_body_start_idx = 0;
     m_start_line = 0;
     m_check_state = CHECK_STATE_REQUESTLINE;
+    m_content_length_seen = false;
+    m_chunk_state = CHUNK_STATE_SIZE;
+    m_chunked_parse_idx = 0;
+    m_chunk_size = 0;
+    m_chunk_bytes_read = 0;
+    m_chunked_body_bytes_received = 0;
     if (!m_read_buf.empty())
     {
         m_read_buf[0] = '\0';
@@ -162,7 +168,7 @@ void HttpConnection::process()
     bool write_ret = process_write(read_ret);
     if (!write_ret)
     {
-        close_conn();
+        close_conn_locked();
         return;
     }
     modfd(m_epollfd, m_sockfd, EPOLLOUT, m_TRIGMode);

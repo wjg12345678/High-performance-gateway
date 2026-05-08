@@ -1,6 +1,8 @@
 #include "connection.h"
 
+#include <cerrno>
 #include <cctype>
+#include <climits>
 #include <cstdlib>
 #include <cstring>
 #include <strings.h>
@@ -15,6 +17,64 @@ namespace
 bool starts_with_ignore_case_local(const char *text, const char *prefix)
 {
     return strncasecmp(text, prefix, strlen(prefix)) == 0;
+}
+
+bool contains_chunked_transfer_encoding(const char *text)
+{
+    const char *cursor = text;
+    while (*cursor != '\0')
+    {
+        while (*cursor == ' ' || *cursor == '\t' || *cursor == ',')
+        {
+            ++cursor;
+        }
+
+        const char *token_start = cursor;
+        while (*cursor != '\0' && *cursor != ',')
+        {
+            ++cursor;
+        }
+
+        const char *token_end = cursor;
+        while (token_end > token_start && (token_end[-1] == ' ' || token_end[-1] == '\t'))
+        {
+            --token_end;
+        }
+
+        if (token_end - token_start == 7 && strncasecmp(token_start, "chunked", 7) == 0)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool parse_chunk_size_line(const char *start, const char *end, long &chunk_size)
+{
+    while (start < end && (*start == ' ' || *start == '\t'))
+    {
+        ++start;
+    }
+
+    const char *size_end = start;
+    while (size_end < end && *size_end != ';' && *size_end != ' ' && *size_end != '\t')
+    {
+        if (!isxdigit((unsigned char)*size_end))
+        {
+            return false;
+        }
+        ++size_end;
+    }
+    if (size_end == start)
+    {
+        return false;
+    }
+
+    string size_text(start, size_end);
+    char *endptr = nullptr;
+    errno = 0;
+    chunk_size = strtol(size_text.c_str(), &endptr, 16);
+    return errno != ERANGE && endptr != nullptr && *endptr == '\0' && chunk_size >= 0 && chunk_size != LONG_MAX;
 }
 }
 
@@ -136,9 +196,23 @@ HttpConnection::HTTP_CODE HttpConnection::parse_headers(char *text)
         }
         if (m_chunked)
         {
-            return NOT_IMPLEMENTED;
+            if (m_content_length_seen)
+            {
+                return BAD_REQUEST;
+            }
+            if (starts_with_ignore_case_local(m_content_type, "multipart/form-data"))
+            {
+                if (!begin_streamed_body_capture())
+                {
+                    return INTERNAL_ERROR;
+                }
+            }
+            m_check_state = CHECK_STATE_CONTENT;
+            m_body_start_idx = m_checked_idx;
+            m_chunked_parse_idx = m_body_start_idx;
+            return NO_REQUEST;
         }
-        if (m_content_length != 0)
+        else if (m_content_length != 0)
         {
             if (starts_with_ignore_case_local(m_content_type, "multipart/form-data"))
             {
@@ -174,6 +248,7 @@ HttpConnection::HTTP_CODE HttpConnection::parse_headers(char *text)
     {
         text += 15;
         text += strspn(text, " \t");
+        m_content_length_seen = true;
         m_content_length = atol(text);
         if (m_content_length < 0)
         {
@@ -196,7 +271,7 @@ HttpConnection::HTTP_CODE HttpConnection::parse_headers(char *text)
     {
         text += 18;
         text += strspn(text, " \t");
-        if (strcasecmp(text, "chunked") == 0)
+        if (contains_chunked_transfer_encoding(text))
         {
             m_chunked = true;
         }
@@ -218,7 +293,7 @@ HttpConnection::HTTP_CODE HttpConnection::parse_content(char *text)
 {
     if (m_chunked)
     {
-        return NOT_IMPLEMENTED;
+        return parse_chunked_content();
     }
     (void)text;
     if (m_stream_body_file != nullptr)
@@ -253,6 +328,135 @@ HttpConnection::HTTP_CODE HttpConnection::parse_content(char *text)
         return GET_REQUEST;
     }
     return NO_REQUEST;
+}
+
+HttpConnection::HTTP_CODE HttpConnection::append_decoded_body_chunk(const char *data, long len)
+{
+    if (len <= 0)
+    {
+        return NO_REQUEST;
+    }
+
+    if (m_stream_body_file != nullptr)
+    {
+        if (!append_streamed_body_chunk(data, static_cast<size_t>(len)))
+        {
+            if (m_body_parse_error_status == 413)
+            {
+                return PAYLOAD_TOO_LARGE;
+            }
+            if (m_body_parse_error_status == 400)
+            {
+                return BAD_REQUEST;
+            }
+            return INTERNAL_ERROR;
+        }
+        return NO_REQUEST;
+    }
+
+    if (m_chunked_body_bytes_received + len > READ_BUFFER_MAX_SIZE)
+    {
+        return PAYLOAD_TOO_LARGE;
+    }
+
+    m_request_body.append(data, static_cast<size_t>(len));
+    m_chunked_body_bytes_received += len;
+    return NO_REQUEST;
+}
+
+HttpConnection::HTTP_CODE HttpConnection::parse_chunked_content()
+{
+    while (m_chunked_parse_idx < m_read_idx)
+    {
+        if (m_chunk_state == CHUNK_STATE_SIZE)
+        {
+            long line_end = m_chunked_parse_idx;
+            while (line_end + 1 < m_read_idx && !(m_read_buf[line_end] == '\r' && m_read_buf[line_end + 1] == '\n'))
+            {
+                ++line_end;
+            }
+            if (line_end + 1 >= m_read_idx)
+            {
+                compact_read_buffer_prefix(m_chunked_parse_idx);
+                m_chunked_parse_idx = 0;
+                return NO_REQUEST;
+            }
+            if (!parse_chunk_size_line(m_read_buf.data() + m_chunked_parse_idx, m_read_buf.data() + line_end, m_chunk_size))
+            {
+                return BAD_REQUEST;
+            }
+            m_chunked_parse_idx = line_end + 2;
+            m_chunk_bytes_read = 0;
+            m_chunk_state = (m_chunk_size == 0) ? CHUNK_STATE_TRAILER : CHUNK_STATE_DATA;
+        }
+        else if (m_chunk_state == CHUNK_STATE_DATA)
+        {
+            long available = m_read_idx - m_chunked_parse_idx;
+            long remaining = m_chunk_size - m_chunk_bytes_read;
+            long data_len = available < remaining ? available : remaining;
+            HTTP_CODE append_code = append_decoded_body_chunk(m_read_buf.data() + m_chunked_parse_idx, data_len);
+            if (append_code != NO_REQUEST)
+            {
+                return append_code;
+            }
+            m_chunked_parse_idx += data_len;
+            m_chunk_bytes_read += data_len;
+            if (m_chunk_bytes_read < m_chunk_size)
+            {
+                compact_read_buffer_prefix(m_chunked_parse_idx);
+                m_chunked_parse_idx = 0;
+                return NO_REQUEST;
+            }
+            m_chunk_state = CHUNK_STATE_DATA_CRLF;
+        }
+        else if (m_chunk_state == CHUNK_STATE_DATA_CRLF)
+        {
+            if (m_read_idx - m_chunked_parse_idx < 2)
+            {
+                compact_read_buffer_prefix(m_chunked_parse_idx);
+                m_chunked_parse_idx = 0;
+                return NO_REQUEST;
+            }
+            if (m_read_buf[m_chunked_parse_idx] != '\r' || m_read_buf[m_chunked_parse_idx + 1] != '\n')
+            {
+                return BAD_REQUEST;
+            }
+            m_chunked_parse_idx += 2;
+            m_chunk_state = CHUNK_STATE_SIZE;
+        }
+        else if (m_chunk_state == CHUNK_STATE_TRAILER)
+        {
+            long line_end = m_chunked_parse_idx;
+            while (line_end + 1 < m_read_idx && !(m_read_buf[line_end] == '\r' && m_read_buf[line_end + 1] == '\n'))
+            {
+                ++line_end;
+            }
+            if (line_end + 1 >= m_read_idx)
+            {
+                compact_read_buffer_prefix(m_chunked_parse_idx);
+                m_chunked_parse_idx = 0;
+                return NO_REQUEST;
+            }
+            if (line_end == m_chunked_parse_idx)
+            {
+                m_chunked_parse_idx += 2;
+                m_chunk_state = CHUNK_STATE_DONE;
+                return GET_REQUEST;
+            }
+            m_chunked_parse_idx = line_end + 2;
+        }
+        else if (m_chunk_state == CHUNK_STATE_DONE)
+        {
+            return GET_REQUEST;
+        }
+    }
+
+    if (m_chunk_state != CHUNK_STATE_DONE)
+    {
+        compact_read_buffer_prefix(m_chunked_parse_idx);
+        m_chunked_parse_idx = 0;
+    }
+    return m_chunk_state == CHUNK_STATE_DONE ? GET_REQUEST : NO_REQUEST;
 }
 
 bool HttpConnection::parse_post_body()
@@ -589,7 +793,7 @@ HttpConnection::HTTP_CODE HttpConnection::process_read()
         case CHECK_STATE_CONTENT:
         {
             ret = parse_content(text);
-            if (ret == NOT_IMPLEMENTED || ret == PAYLOAD_TOO_LARGE || ret == INTERNAL_ERROR)
+            if (ret == BAD_REQUEST || ret == NOT_IMPLEMENTED || ret == PAYLOAD_TOO_LARGE || ret == INTERNAL_ERROR)
                 return ret;
             if (ret == GET_REQUEST)
                 return do_request();

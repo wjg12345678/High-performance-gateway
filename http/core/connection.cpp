@@ -148,6 +148,13 @@ void HttpConnection::set_legacy_compat(bool enabled)
 //关闭连接，关闭一个连接，客户总量减一
 void HttpConnection::close_conn(bool real_close)
 {
+    lock_request();
+    close_conn_locked(real_close);
+    unlock_request();
+}
+
+void HttpConnection::close_conn_locked(bool real_close)
+{
     if (real_close && (m_sockfd != -1))
     {
         cleanup_temp_upload_state();
@@ -167,6 +174,7 @@ void HttpConnection::close_conn(bool real_close)
 //初始化连接,外部调用初始化套接字地址
 void HttpConnection::init(int epollfd, int sockfd, const sockaddr_in &addr, const string &root, int TRIGMode, int close_log)
 {
+    lock_request();
     m_epollfd = epollfd;
     m_sockfd = sockfd;
     m_address = addr;
@@ -203,6 +211,7 @@ void HttpConnection::init(int epollfd, int sockfd, const sockaddr_in &addr, cons
     doc_root = root;
 
     init();
+    unlock_request();
 }
 
 void HttpConnection::refresh_active()
@@ -244,9 +253,15 @@ void HttpConnection::init()
     m_query_string = nullptr;
     m_version = nullptr;
     m_content_length = 0;
+    m_content_length_seen = false;
     m_host = nullptr;
     m_is_http_1_1 = false;
     m_chunked = false;
+    m_chunk_state = CHUNK_STATE_SIZE;
+    m_chunked_parse_idx = 0;
+    m_chunk_size = 0;
+    m_chunk_bytes_read = 0;
+    m_chunked_body_bytes_received = 0;
     m_start_line = 0;
     m_checked_idx = 0;
     m_body_start_idx = 0;

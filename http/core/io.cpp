@@ -356,6 +356,36 @@ void HttpConnection::sync_read_buffer()
     m_read_buf[m_read_idx] = '\0';
 }
 
+void HttpConnection::compact_read_buffer_prefix(long consumed_bytes)
+{
+    if (consumed_bytes <= 0)
+    {
+        return;
+    }
+    if (consumed_bytes > m_read_ring.size)
+    {
+        consumed_bytes = m_read_ring.size;
+    }
+
+    sync_read_buffer();
+    const long remaining = m_read_idx - consumed_bytes;
+    if (remaining > 0)
+    {
+        memmove(m_read_buf.data(), m_read_buf.data() + consumed_bytes, static_cast<size_t>(remaining));
+    }
+    m_read_buf[remaining] = '\0';
+
+    reset_ring_buffer(m_read_ring, m_read_ring_buf.data(), (int)m_read_ring_buf.size());
+    if (remaining > 0)
+    {
+        ring_append(m_read_ring, m_read_buf.data(), static_cast<int>(remaining));
+    }
+    m_read_idx = remaining;
+    m_checked_idx = 0;
+    m_body_start_idx = 0;
+    m_start_line = 0;
+}
+
 int HttpConnection::do_tls_handshake()
 {
     if (!m_https_enabled || m_tls_handshake_done)

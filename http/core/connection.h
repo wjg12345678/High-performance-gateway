@@ -73,6 +73,15 @@ public:
         LINE_OPEN
     };
 
+    enum CHUNK_STATE
+    {
+        CHUNK_STATE_SIZE = 0,
+        CHUNK_STATE_DATA,
+        CHUNK_STATE_DATA_CRLF,
+        CHUNK_STATE_TRAILER,
+        CHUNK_STATE_DONE
+    };
+
     using RouteHandler = HTTP_CODE (HttpConnection::*)();
 
 public:
@@ -140,6 +149,7 @@ private:
     int ring_recv(ring_buffer &ring);
     int ring_peek(const ring_buffer &ring, char *dest, int len) const;
     int ring_send(ring_buffer &ring);
+    void compact_read_buffer_prefix(long consumed_bytes);
     int socket_send(const char *buffer, int len);
     int wait_event_for_io(int default_event) const;
     bool send_file_over_tls();
@@ -151,6 +161,8 @@ private:
     HTTP_CODE parse_request_line(char *text);
     HTTP_CODE parse_headers(char *text);
     HTTP_CODE parse_content(char *text);
+    HTTP_CODE parse_chunked_content();
+    HTTP_CODE append_decoded_body_chunk(const char *data, long len);
     HTTP_CODE do_request();
 
     // Routing and middleware orchestration.
@@ -202,6 +214,7 @@ private:
     bool is_api_request() const;
     bool requires_auth() const;
     bool should_skip_request_log() const;
+    void close_conn_locked(bool real_close = true);
 
     // Authentication and session management.
     string make_session_token(const string &username) const;
@@ -236,7 +249,8 @@ private:
     HTTP_CODE handle_operation_delete(const char *path);
     bool open_managed_file(const string &path, const string &content_type, const string &download_name);
     bool parse_managed_upload_payload(ManagedUploadPayload &payload, int &status, const char *&title, string &message);
-    string build_file_list_json(MYSQL_RES *result, long next_cursor, int limit, bool include_deleted) const;
+    string build_private_file_list_json(MYSQL_RES *result, long next_cursor, int limit, bool include_deleted) const;
+    string build_public_file_list_json(MYSQL_RES *result, long next_cursor, int limit) const;
     string build_operation_list_json(MYSQL_RES *result) const;
     string ensure_unique_owned_filename(const string &requested_name, long ignore_file_id = 0);
     bool begin_streamed_body_capture();
@@ -294,9 +308,15 @@ private:
     char *m_version;
     char *m_host;
     long m_content_length;
+    bool m_content_length_seen;
     bool m_linger;
     bool m_is_http_1_1;
     bool m_chunked;
+    CHUNK_STATE m_chunk_state;
+    long m_chunked_parse_idx;
+    long m_chunk_size;
+    long m_chunk_bytes_read;
+    long m_chunked_body_bytes_received;
     struct stat m_file_stat;
     int cgi;        //是否启用的POST
     int bytes_to_send;

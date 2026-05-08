@@ -60,7 +60,9 @@ bool connection_pool::reconnect_connection(MYSQL *&conn)
 {
 	if (conn != NULL)
 	{
+		lock.lock();
 		m_connLastActive.erase(conn);
+		lock.unlock();
 		mysql_close(conn);
 		conn = NULL;
 	}
@@ -71,7 +73,9 @@ bool connection_pool::reconnect_connection(MYSQL *&conn)
 		return false;
 	}
 
+	lock.lock();
 	m_connLastActive[conn] = time(NULL);
+	lock.unlock();
 	return true;
 }
 
@@ -83,30 +87,47 @@ bool connection_pool::check_connection(MYSQL *conn)
 	}
 
 	time_t now = time(NULL);
+	lock.lock();
 	map<MYSQL *, time_t>::iterator it = m_connLastActive.find(conn);
 	if (it == m_connLastActive.end())
 	{
 		m_connLastActive[conn] = now;
+		lock.unlock();
 		return true;
 	}
 
 	if (now - it->second < m_idleTimeout)
 	{
+		lock.unlock();
 		return true;
 	}
+	lock.unlock();
 
 	if (mysql_ping(conn) != 0)
 	{
 		return false;
 	}
 
+	lock.lock();
 	it->second = now;
+	lock.unlock();
 	return true;
 }
 
 //构造初始化
 void connection_pool::init(string url, string User, string PassWord, string DBName, int Port, int MaxConn, int close_log, int idle_timeout)
 {
+	static bool mysql_library_ready = false;
+	if (!mysql_library_ready)
+	{
+		if (mysql_library_init(0, NULL, NULL) != 0)
+		{
+			LOG_ERROR("MySQL client library init failed");
+			exit(1);
+		}
+		mysql_library_ready = true;
+	}
+
 	m_url = url;
 	m_Port = Port;
 	m_User = User;
@@ -140,7 +161,7 @@ void connection_pool::init(string url, string User, string PassWord, string DBNa
 		++m_FreeConn;
 	}
 
-	reserve = sem(m_FreeConn);
+	reserve.reset(m_FreeConn);
 
 	m_MaxConn = m_FreeConn;
 }
@@ -189,8 +210,8 @@ bool connection_pool::ReleaseConnection(MYSQL *con)
 	if (NULL == con)
 		return false;
 
-	lock.lock();
 	bool healthy = check_connection(con) || reconnect_connection(con);
+	lock.lock();
 	if (!healthy)
 	{
 		--m_CurConn;
@@ -249,11 +270,17 @@ connectionRAII::connectionRAII(MYSQL **SQL, connection_pool *connPool){
 	
 	conRAII = *SQL;
 	poolRAII = connPool;
+	connRefRAII = SQL;
 }
 
 connectionRAII::~connectionRAII(){
 	if (conRAII != NULL)
 	{
 		poolRAII->ReleaseConnection(conRAII);
+		if (connRefRAII != NULL)
+		{
+			*connRefRAII = NULL;
+		}
+		conRAII = NULL;
 	}
 }

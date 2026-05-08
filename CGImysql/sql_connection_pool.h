@@ -62,6 +62,7 @@ public:
 private:
 	MYSQL *conRAII;
 	connection_pool *poolRAII;
+	MYSQL **connRefRAII;
 };
 
 #endif

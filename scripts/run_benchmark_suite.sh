@@ -10,8 +10,62 @@ CONCURRENCY_SET="${CONCURRENCY_SET:-50 100 200}"
 USER_NAME="${USER_NAME:-upload_fix_manual}"
 PASSWORD="${PASSWORD:-123456}"
 REPORT_DIR="${REPORT_DIR:-$ROOT_DIR/reports/benchmarks/$(date +%Y%m%d_%H%M%S)}"
+COMPOSE_CMD="${COMPOSE_CMD:-docker compose}"
+suite_failed=0
 
 mkdir -p "$REPORT_DIR"
+
+resolve_container_id() {
+    service="$1"
+    container_id="$($COMPOSE_CMD ps -q "$service" 2>/dev/null | head -n 1)"
+    if [ -z "$container_id" ]; then
+        echo "failed to resolve container id for service: $service" >&2
+        exit 1
+    fi
+    printf '%s\n' "$container_id"
+}
+
+resolve_container_name() {
+    container_id="$1"
+    docker inspect --format '{{.Name}}' "$container_id" 2>/dev/null | sed 's#^/##'
+}
+
+restart_count() {
+    container_id="$1"
+    docker inspect --format '{{.RestartCount}}' "$container_id" 2>/dev/null || echo "0"
+}
+
+socket_error_total() {
+    errors="$1"
+    if [ "$errors" = "none" ]; then
+        echo "0"
+        return
+    fi
+    printf '%s\n' "$errors" | awk '
+        {
+            for (i = 2; i <= NF; i += 2) {
+                gsub(/,/, "", $i)
+                sum += $i + 0
+            }
+            print sum + 0
+        }
+    '
+}
+
+has_sigsegv_since() {
+    container_id="$1"
+    since_ts="$2"
+    if docker logs --since "$since_ts" "$container_id" 2>&1 | grep -q 'server received SIGSEGV'; then
+        echo "1"
+    else
+        echo "0"
+    fi
+}
+
+WEB_CONTAINER_ID="$(resolve_container_id web)"
+MYSQL_CONTAINER_ID="$(resolve_container_id mysql)"
+WEB_CONTAINER_NAME="$(resolve_container_name "$WEB_CONTAINER_ID")"
+MYSQL_CONTAINER_NAME="$(resolve_container_name "$MYSQL_CONTAINER_ID")"
 
 login_json="$(curl -sS -X POST "$BASE_URL/api/login" \
   -H "Content-Type: application/json" \
@@ -29,8 +83,12 @@ echo "threads=$THREADS"
 echo "duration=$DURATION"
 echo "concurrency_set=$CONCURRENCY_SET"
 echo "user_name=$USER_NAME"
+echo "web_container_id=$WEB_CONTAINER_ID"
+echo "mysql_container_id=$MYSQL_CONTAINER_ID"
+echo "web_container_name=$WEB_CONTAINER_NAME"
+echo "mysql_container_name=$MYSQL_CONTAINER_NAME"
 
-printf '%s\n' "endpoint,method,concurrency,duration,threads,request_size_bytes,db_hit,https,requests_per_sec,latency_avg_ms,latency_p50_ms,latency_p90_ms,latency_p95_ms,latency_p99_ms,transfer_per_sec_mb,errors,web_cpu_peak,web_mem_peak,mysql_cpu_peak,mysql_mem_peak" > "$REPORT_DIR/results.csv"
+printf '%s\n' "endpoint,method,concurrency,duration,threads,request_size_bytes,db_hit,https,requests_per_sec,latency_avg_ms,latency_p50_ms,latency_p90_ms,latency_p95_ms,latency_p99_ms,transfer_per_sec_mb,errors,socket_error_total,web_restart_delta,mysql_restart_delta,sigsegv_detected,valid,invalid_reason,web_cpu_peak,web_mem_peak,mysql_cpu_peak,mysql_mem_peak" > "$REPORT_DIR/results.csv"
 
 run_case() {
     name="$1"
@@ -43,25 +101,36 @@ run_case() {
 
     wrk_out="$REPORT_DIR/${name}_c${concurrency}.wrk.txt"
     stats_out="$REPORT_DIR/${name}_c${concurrency}.stats.csv"
+    gate_out="$REPORT_DIR/${name}_c${concurrency}.gate.txt"
+    web_logs_out="$REPORT_DIR/${name}_c${concurrency}.web.log.txt"
+    mysql_logs_out="$REPORT_DIR/${name}_c${concurrency}.mysql.log.txt"
+    case_started_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+    web_restart_before="$(restart_count "$WEB_CONTAINER_ID")"
+    mysql_restart_before="$(restart_count "$MYSQL_CONTAINER_ID")"
 
     : > "$stats_out"
     (
         while :; do
-            docker stats --no-stream --format '{{.Name}},{{.CPUPerc}},{{.MemUsage}}' \
-              atlas-webserver-web-1 atlas-webserver-mysql-1 >> "$stats_out" 2>/dev/null || true
+            docker stats --no-stream --format '{{.Container}},{{.Name}},{{.CPUPerc}},{{.MemUsage}}' \
+              "$WEB_CONTAINER_ID" "$MYSQL_CONTAINER_ID" >> "$stats_out" 2>/dev/null || true
             sleep 1
         done
     ) &
     stats_pid=$!
 
+    wrk_status=0
     if [ -n "$script_path" ]; then
-        TOKEN="$TOKEN" wrk -t"$THREADS" -c"$concurrency" -d"$DURATION" --latency -s "$script_path" "$url" > "$wrk_out"
+        TOKEN="$TOKEN" wrk -t"$THREADS" -c"$concurrency" -d"$DURATION" --latency -s "$script_path" "$url" > "$wrk_out" || wrk_status=$?
     else
-        wrk -t"$THREADS" -c"$concurrency" -d"$DURATION" --latency "$url" > "$wrk_out"
+        wrk -t"$THREADS" -c"$concurrency" -d"$DURATION" --latency "$url" > "$wrk_out" || wrk_status=$?
     fi
 
     kill "$stats_pid" >/dev/null 2>&1 || true
     wait "$stats_pid" 2>/dev/null || true
+    if [ "$wrk_status" -ne 0 ]; then
+        echo "wrk failed for case: $name c=$concurrency" >&2
+        exit "$wrk_status"
+    fi
 
     requests_per_sec="$(awk '/Requests\/sec:/ {print $2}' "$wrk_out")"
     transfer_per_sec="$(awk '/Transfer\/sec:/ {print $2 " " $3}' "$wrk_out")"
@@ -73,11 +142,72 @@ run_case() {
     if [ -z "${errors:-}" ]; then
         errors="none"
     fi
+    socket_errors_total="$(socket_error_total "$errors")"
+    web_restart_after="$(restart_count "$WEB_CONTAINER_ID")"
+    mysql_restart_after="$(restart_count "$MYSQL_CONTAINER_ID")"
+    web_restart_delta=$((web_restart_after - web_restart_before))
+    mysql_restart_delta=$((mysql_restart_after - mysql_restart_before))
+    sigsegv_detected="$(has_sigsegv_since "$WEB_CONTAINER_ID" "$case_started_at")"
+    case_finished_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 
-    web_cpu_peak="$(awk -F',' '$1=="atlas-webserver-web-1" {gsub(/%/,"",$2); if ($2+0>max) max=$2+0} END {if (max=="") max=0; print max}' "$stats_out")"
-    mysql_cpu_peak="$(awk -F',' '$1=="atlas-webserver-mysql-1" {gsub(/%/,"",$2); if ($2+0>max) max=$2+0} END {if (max=="") max=0; print max}' "$stats_out")"
-    web_mem_peak="$(awk -F',' '$1=="atlas-webserver-web-1" {if (match($3, /[0-9.]+MiB/)) {v=substr($3, RSTART, RLENGTH-3)+0; if (v>max) max=v}} END {if (max=="") max=0; print max}' "$stats_out")"
-    mysql_mem_peak="$(awk -F',' '$1=="atlas-webserver-mysql-1" {if (match($3, /[0-9.]+MiB/)) {v=substr($3, RSTART, RLENGTH-3)+0; if (v>max) max=v}} END {if (max=="") max=0; print max}' "$stats_out")"
+    valid="1"
+    invalid_reason="none"
+    captured_web_logs="0"
+    captured_mysql_logs="0"
+    if [ "$socket_errors_total" -ne 0 ] || [ "$web_restart_delta" -ne 0 ] || [ "$mysql_restart_delta" -ne 0 ] || [ "$sigsegv_detected" -ne 0 ]; then
+        valid="0"
+        invalid_reason=""
+        if [ "$socket_errors_total" -ne 0 ]; then
+            invalid_reason="${invalid_reason}socket_errors=$socket_errors_total;"
+        fi
+        if [ "$web_restart_delta" -ne 0 ]; then
+            invalid_reason="${invalid_reason}web_restart_delta=$web_restart_delta;"
+        fi
+        if [ "$mysql_restart_delta" -ne 0 ]; then
+            invalid_reason="${invalid_reason}mysql_restart_delta=$mysql_restart_delta;"
+        fi
+        if [ "$sigsegv_detected" -ne 0 ]; then
+            invalid_reason="${invalid_reason}sigsegv_detected=1;"
+        fi
+        suite_failed=1
+        echo "invalid benchmark case: $name c=$concurrency reason=$invalid_reason" >&2
+        docker logs --since "$case_started_at" "$WEB_CONTAINER_ID" > "$web_logs_out" 2>&1 || true
+        docker logs --since "$case_started_at" "$MYSQL_CONTAINER_ID" > "$mysql_logs_out" 2>&1 || true
+        captured_web_logs="1"
+        captured_mysql_logs="1"
+    fi
+
+    cat > "$gate_out" <<EOF
+endpoint=$name
+method=$method
+concurrency=$concurrency
+started_at=$case_started_at
+finished_at=$case_finished_at
+web_container_id=$WEB_CONTAINER_ID
+web_container_name=$WEB_CONTAINER_NAME
+mysql_container_id=$MYSQL_CONTAINER_ID
+mysql_container_name=$MYSQL_CONTAINER_NAME
+errors=$errors
+socket_error_total=$socket_errors_total
+web_restart_before=$web_restart_before
+web_restart_after=$web_restart_after
+web_restart_delta=$web_restart_delta
+mysql_restart_before=$mysql_restart_before
+mysql_restart_after=$mysql_restart_after
+mysql_restart_delta=$mysql_restart_delta
+sigsegv_detected=$sigsegv_detected
+valid=$valid
+invalid_reason=$invalid_reason
+web_logs_captured=$captured_web_logs
+web_logs_file=$(basename "$web_logs_out")
+mysql_logs_captured=$captured_mysql_logs
+mysql_logs_file=$(basename "$mysql_logs_out")
+EOF
+
+    web_cpu_peak="$(awk -F',' -v id="$WEB_CONTAINER_ID" '$1==id {gsub(/%/,"",$3); if ($3+0>max) max=$3+0} END {if (max=="") max=0; print max}' "$stats_out")"
+    mysql_cpu_peak="$(awk -F',' -v id="$MYSQL_CONTAINER_ID" '$1==id {gsub(/%/,"",$3); if ($3+0>max) max=$3+0} END {if (max=="") max=0; print max}' "$stats_out")"
+    web_mem_peak="$(awk -F',' -v id="$WEB_CONTAINER_ID" '$1==id {if (match($4, /[0-9.]+MiB/)) {v=substr($4, RSTART, RLENGTH-3)+0; if (v>max) max=v}} END {if (max=="") max=0; print max}' "$stats_out")"
+    mysql_mem_peak="$(awk -F',' -v id="$MYSQL_CONTAINER_ID" '$1==id {if (match($4, /[0-9.]+MiB/)) {v=substr($4, RSTART, RLENGTH-3)+0; if (v>max) max=v}} END {if (max=="") max=0; print max}' "$stats_out")"
 
     latency_avg_ms="$(printf '%s\n' "$latency_avg" | awk '
         {v=$1; u=$2; if (u=="us") v/=1000; else if (u=="s") v*=1000; print v}
@@ -96,9 +226,10 @@ run_case() {
         {v=$1; u=$2; if (u=="KB") v/=1024; else if (u=="GB") v*=1024; print v}
     ')"
 
-    printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"%s",%s,%s,%s,%s\n' \
+    printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"%s",%s,%s,%s,%s,%s,"%s",%s,%s,%s,%s\n' \
       "$name" "$method" "$concurrency" "$DURATION" "$THREADS" "$request_size" "$db_hit" "0" \
       "$requests_per_sec" "$latency_avg_ms" "$p50_ms" "$p90_ms" "$p95_ms" "$p99_ms" "$transfer_mb" "$errors" \
+      "$socket_errors_total" "$web_restart_delta" "$mysql_restart_delta" "$sigsegv_detected" "$valid" "$invalid_reason" \
       "$web_cpu_peak" "$web_mem_peak" "$mysql_cpu_peak" "$mysql_mem_peak" >> "$REPORT_DIR/results.csv"
 }
 
@@ -112,3 +243,7 @@ for c in $CONCURRENCY_SET; do
 done
 
 echo "done: $REPORT_DIR/results.csv"
+if [ "$suite_failed" -ne 0 ]; then
+    echo "benchmark suite completed with invalid cases" >&2
+    exit 1
+fi

@@ -188,6 +188,7 @@ void WebServer::sql_pool()
         execute_optional_migration(mysql, "ALTER TABLE files ADD KEY idx_owner_deleted_id (owner_username, deleted_at, id)");
         execute_optional_migration(mysql, "ALTER TABLE files ADD KEY idx_public_deleted_id (is_public, deleted_at, id)");
         execute_optional_migration(mysql, "ALTER TABLE files ADD KEY idx_owner_name_deleted (owner_username, original_name, deleted_at)");
+        execute_optional_migration(mysql, "ALTER TABLE files DROP INDEX idx_owner_username");
     }
     users[0].initmysql_result(m_connPool);
 }

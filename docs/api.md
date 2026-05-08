@@ -153,12 +153,7 @@ Authorization: Bearer <token>
       "content_type": "text/plain",
       "size": 18,
       "is_public": false,
-      "sha256": "2aae6c35c94fcfb415dbe95f408b9ce91ee846ed",
-      "owner": "demo",
-      "created_at": "2026-04-16 14:00:00",
-      "is_deleted": false,
-      "content_available": true,
-      "deleted_at": null
+      "created_at": "2026-04-16 14:00:00"
     }
   ],
   "pagination": {

@@ -5,7 +5,7 @@
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Atlas WebServer | 文件分享</title>
         <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-        <link rel="stylesheet" href="./atlas.css">
+        <link rel="stylesheet" href="/atlas.css">
         <style>
             .shell {
                 width: min(760px, calc(100% - 32px));
@@ -23,6 +23,9 @@
                 margin: 0;
                 font-size: clamp(28px, 5vw, 40px);
                 line-height: 1.2;
+                max-width: 100%;
+                overflow-wrap: anywhere;
+                word-break: break-word;
             }
 
             .meta {
@@ -101,6 +104,18 @@
                         .replace(/'/g, "&#39;");
                 }
 
+                function formatBytes(bytes) {
+                    const value = Number(bytes) || 0;
+                    if (value <= 0) {
+                        return "0 MB";
+                    }
+                    const mb = value / (1024 * 1024);
+                    if (mb < 0.01) {
+                        return "< 0.01 MB";
+                    }
+                    return mb.toFixed(2) + " MB";
+                }
+
                 async function copyCurrentLink() {
                     if (navigator.clipboard && navigator.clipboard.writeText) {
                         await navigator.clipboard.writeText(window.location.href);
@@ -136,7 +151,7 @@
                         fileMeta.innerHTML =
                             "上传者: " + escapeHtml(file.owner) +
                             "<br>类型: " + escapeHtml(file.content_type) +
-                            "<br>大小: " + file.size + " bytes" +
+                            "<br>大小: " + formatBytes(file.size) +
                             "<br>文件 ID: #" + file.id;
                         downloadLink.href = file.download_url;
                         downloadLink.download = file.filename || ("file-" + file.id);

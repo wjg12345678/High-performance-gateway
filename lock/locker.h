@@ -28,6 +28,17 @@ public:
     {
         sem_destroy(&m_sem);
     }
+    sem(const sem &) = delete;
+    sem &operator=(const sem &) = delete;
+
+    void reset(unsigned int num)
+    {
+        sem_destroy(&m_sem);
+        if (sem_init(&m_sem, 0, num) != 0)
+        {
+            throw std::exception();
+        }
+    }
     bool wait()
     {
         return sem_wait(&m_sem) == 0;

@@ -358,6 +358,12 @@ timespec threadpool<T>::make_timeout() const
 template <typename T>
 void threadpool<T>::run()
 {
+    bool mysql_thread_ready = false;
+    if (m_connPool != nullptr)
+    {
+        mysql_thread_ready = mysql_thread_init() == 0;
+    }
+
     if (m_queue_mode == queue_mode_mutex)
     {
         while (true)
@@ -375,6 +381,10 @@ void threadpool<T>::run()
                     {
                         m_current_thread_number.fetch_sub(1, std::memory_order_acq_rel);
                         m_queuelocker.unlock();
+                        if (mysql_thread_ready)
+                        {
+                            mysql_thread_end();
+                        }
                         return;
                     }
                 }
@@ -388,6 +398,10 @@ void threadpool<T>::run()
             {
                 m_current_thread_number.fetch_sub(1, std::memory_order_acq_rel);
                 m_queuelocker.unlock();
+                if (mysql_thread_ready)
+                {
+                    mysql_thread_end();
+                }
                 return;
             }
 
@@ -413,6 +427,10 @@ void threadpool<T>::run()
                 m_pending_task_number.load(std::memory_order_acquire) == 0)
             {
                 m_current_thread_number.fetch_sub(1, std::memory_order_acq_rel);
+                if (mysql_thread_ready)
+                {
+                    mysql_thread_end();
+                }
                 return;
             }
 
@@ -430,6 +448,10 @@ void threadpool<T>::run()
                         m_current_thread_number.load(std::memory_order_acquire) > m_min_thread_number)
                     {
                         m_current_thread_number.fetch_sub(1, std::memory_order_acq_rel);
+                        if (mysql_thread_ready)
+                        {
+                            mysql_thread_end();
+                        }
                         return;
                     }
                     continue;
@@ -457,6 +479,10 @@ void threadpool<T>::run()
             if (m_stop.load(std::memory_order_acquire))
             {
                 m_current_thread_number.fetch_sub(1, std::memory_order_acq_rel);
+                if (mysql_thread_ready)
+                {
+                    mysql_thread_end();
+                }
                 return;
             }
         }

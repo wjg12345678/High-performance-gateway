@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  sanitizer-and-api:
+    runs-on: ubuntu-24.04
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: qgydb
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -proot --silent"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential default-libmysqlclient-dev libssl-dev mysql-client curl python3
+
+      - name: Build and run parser tests under sanitizers
+        run: make test-parser-sanitize
+
+      - name: Build server under ASan/UBSan
+        run: make server-sanitize
+
+      - name: Initialize MySQL schema
+        run: |
+          for i in $(seq 1 60); do
+            if mysqladmin ping -h 127.0.0.1 -uroot -proot --silent; then
+              break
+            fi
+            sleep 1
+          done
+          mysql -h 127.0.0.1 -uroot -proot qgydb < docker/mysql/init.sql
+
+      - name: Start sanitizer server
+        run: |
+          ASAN_OPTIONS=detect_leaks=0:halt_on_error=1 \
+          UBSAN_OPTIONS=halt_on_error=1 \
+          TWS_DB_HOST=127.0.0.1 \
+          TWS_DB_PORT=3306 \
+          TWS_DB_USER=root \
+          TWS_DB_PASSWORD=root \
+          TWS_DB_NAME=qgydb \
+          TWS_LOG_WRITE=0 \
+          TWS_CLOSE_LOG=1 \
+          TWS_THREAD_NUM=2 \
+          TWS_THREADPOOL_MAX_THREADS=2 \
+          TWS_SQL_NUM=2 \
+          LD_PRELOAD="$(gcc -print-file-name=libasan.so)" \
+          ./server-sanitize > /tmp/atlas-server.log 2>&1 &
+          echo $! > /tmp/atlas-server.pid
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:9006/healthz >/dev/null; then
+              exit 0
+            fi
+            if ! kill -0 "$(cat /tmp/atlas-server.pid)" 2>/dev/null; then
+              cat /tmp/atlas-server.log
+              exit 1
+            fi
+            sleep 1
+          done
+          cat /tmp/atlas-server.log
+          exit 1
+
+      - name: Run chunked API integration test
+        run: scripts/test_chunked_api.sh
+
+      - name: Check sanitizer server health
+        run: |
+          if ! kill -0 "$(cat /tmp/atlas-server.pid)" 2>/dev/null; then
+            cat /tmp/atlas-server.log
+            exit 1
+          fi
+          if grep -E 'ERROR: AddressSanitizer|runtime error:' /tmp/atlas-server.log; then
+            cat /tmp/atlas-server.log
+            exit 1
+          fi
+
+      - name: Stop server
+        if: always()
+        run: |
+          if [ -f /tmp/atlas-server.pid ]; then
+            kill "$(cat /tmp/atlas-server.pid)" 2>/dev/null || true
+            wait "$(cat /tmp/atlas-server.pid)" 2>/dev/null || true
+          fi
+
+      - name: Print server log on failure
+        if: failure()
+        run: cat /tmp/atlas-server.log || true

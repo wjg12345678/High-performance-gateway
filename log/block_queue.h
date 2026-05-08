@@ -29,6 +29,7 @@ public:
         m_size = 0;
         m_front = -1;
         m_back = -1;
+        m_closed = false;
     }
 
     void clear()
@@ -48,6 +49,16 @@ public:
 
         m_mutex.unlock();
     }
+
+    bool close()
+    {
+        m_mutex.lock();
+        m_closed = true;
+        m_cond.broadcast();
+        m_mutex.unlock();
+        return true;
+    }
+
     //判断队列是否满了
     bool full() 
     {
@@ -128,10 +139,8 @@ public:
     {
 
         m_mutex.lock();
-        if (m_size >= m_max_size)
+        if (m_closed || m_size >= m_max_size)
         {
-
-            m_cond.broadcast();
             m_mutex.unlock();
             return false;
         }
@@ -150,7 +159,7 @@ public:
     {
 
         m_mutex.lock();
-        while (m_size <= 0)
+        while (m_size <= 0 && !m_closed)
         {
             
             if (!m_cond.wait(m_mutex.get()))
@@ -158,6 +167,12 @@ public:
                 m_mutex.unlock();
                 return false;
             }
+        }
+
+        if (m_size <= 0)
+        {
+            m_mutex.unlock();
+            return false;
         }
 
         m_front = (m_front + 1) % m_max_size;
@@ -174,10 +189,15 @@ public:
         struct timeval now = {0, 0};
         gettimeofday(&now, NULL);
         m_mutex.lock();
-        if (m_size <= 0)
+        if (m_size <= 0 && !m_closed)
         {
             t.tv_sec = now.tv_sec + ms_timeout / 1000;
-            t.tv_nsec = (ms_timeout % 1000) * 1000;
+            t.tv_nsec = now.tv_usec * 1000 + (ms_timeout % 1000) * 1000000;
+            if (t.tv_nsec >= 1000000000)
+            {
+                t.tv_sec += 1;
+                t.tv_nsec -= 1000000000;
+            }
             if (!m_cond.timewait(m_mutex.get(), t))
             {
                 m_mutex.unlock();
@@ -207,6 +227,7 @@ private:
     int m_max_size;
     int m_front;
     int m_back;
+    bool m_closed;
 };
 
 #endif

@@ -23,6 +23,77 @@ const size_t kMultipartTextFieldLimitBytes = 64 * 1024;
 const size_t kStoredNamePrefixLength = 24;
 const size_t kFilenameMaxLength = 80;
 
+bool fetch_page_ids(MYSQL *mysql, const string &sql, long limit, vector<long> &page_ids, long &next_cursor)
+{
+    if (mysql == nullptr)
+    {
+        return false;
+    }
+
+    if (mysql_query(mysql, sql.c_str()) != 0)
+    {
+        return false;
+    }
+
+    MYSQL_RES *result = mysql_store_result(mysql);
+    if (result == nullptr)
+    {
+        return false;
+    }
+
+    page_ids.clear();
+    next_cursor = 0;
+    MYSQL_ROW row = nullptr;
+    while ((row = mysql_fetch_row(result)) != nullptr)
+    {
+        const long id = (row[0] != nullptr) ? atol(row[0]) : 0;
+        if (static_cast<long>(page_ids.size()) < limit)
+        {
+            page_ids.push_back(id);
+        }
+        else
+        {
+            next_cursor = id;
+            break;
+        }
+    }
+
+    mysql_free_result(result);
+    return true;
+}
+
+string join_numeric_ids(const vector<long> &ids)
+{
+    string joined;
+    for (size_t i = 0; i < ids.size(); ++i)
+    {
+        if (i > 0)
+        {
+            joined += ",";
+        }
+        joined += to_string(ids[i]);
+    }
+    return joined;
+}
+
+string build_empty_private_file_list_json(long limit, bool include_deleted)
+{
+    string body = "{\"code\":0,\"files\":[],\"pagination\":{\"limit\":";
+    body += to_string(limit);
+    body += ",\"next_cursor\":0,\"has_more\":false},\"view\":\"";
+    body += include_deleted ? "trash" : "active";
+    body += "\"}";
+    return body;
+}
+
+string build_empty_public_file_list_json(long limit)
+{
+    string body = "{\"code\":0,\"files\":[],\"pagination\":{\"limit\":";
+    body += to_string(limit);
+    body += ",\"next_cursor\":0,\"has_more\":false}}";
+    return body;
+}
+
 bool ends_with_ignore_case(const string &value, const string &suffix)
 {
     if (suffix.size() > value.size())
@@ -584,11 +655,16 @@ bool HttpConnection::append_streamed_body_chunk(const char *data, size_t len)
         return false;
     }
 
-    if (m_stream_body_bytes_received + static_cast<long>(len) > m_content_length)
+    const long body_limit = m_chunked
+                                ? static_cast<long>(m_upload_max_bytes + m_upload_request_overhead_bytes)
+                                : m_content_length;
+    if (m_stream_body_bytes_received + static_cast<long>(len) > body_limit)
     {
-        m_body_parse_error_status = 400;
-        m_body_parse_error_title = "Bad Request";
-        m_body_parse_error_message = "request body overflow";
+        m_body_parse_error_status = m_chunked ? 413 : 400;
+        m_body_parse_error_title = m_chunked ? "Payload Too Large" : "Bad Request";
+        m_body_parse_error_message = m_chunked
+                                         ? string("upload exceeds limit of ") + to_string(m_upload_max_bytes) + " bytes"
+                                         : "request body overflow";
         return false;
     }
 
@@ -820,7 +896,7 @@ HttpConnection::HTTP_CODE HttpConnection::load_owned_file_record(long file_id, M
     return NO_REQUEST;
 }
 
-string HttpConnection::build_file_list_json(MYSQL_RES *result, long next_cursor, int limit, bool include_deleted) const
+string HttpConnection::build_private_file_list_json(MYSQL_RES *result, long next_cursor, int limit, bool include_deleted) const
 {
     string items;
     MYSQL_ROW row;
@@ -836,11 +912,7 @@ string HttpConnection::build_file_list_json(MYSQL_RES *result, long next_cursor,
         first = false;
         ++count;
 
-        const string stored_name = row[7] ? row[7] : "";
-        const string deleted_at = row[9] ? row[9] : "";
-        const bool is_deleted = !deleted_at.empty();
-        const bool content_available = !stored_name.empty() &&
-                                       file_exists_at_path(http_file_helpers::build_file_disk_path(doc_root, stored_name));
+        const string deleted_at = row[6] ? row[6] : "";
 
         items += "{\"id\":";
         items += row[0] ? row[0] : "0";
@@ -852,26 +924,21 @@ string HttpConnection::build_file_list_json(MYSQL_RES *result, long next_cursor,
         items += row[3] ? row[3] : "0";
         items += ",\"is_public\":";
         items += row[5] ? row[5] : "0";
-        items += ",\"owner\":\"";
-        items += json_escape(row[6] ? row[6] : "");
-        items += "\",\"sha256\":\"";
-        items += json_escape(row[8] ? row[8] : "");
         items += "\",\"created_at\":\"";
         items += json_escape(row[4] ? row[4] : "");
-        items += "\",\"is_deleted\":";
-        items += is_deleted ? "true" : "false";
-        items += ",\"content_available\":";
-        items += content_available ? "true" : "false";
-        items += ",\"deleted_at\":";
-        if (deleted_at.empty())
+        if (include_deleted)
         {
-            items += "null";
-        }
-        else
-        {
-            items += "\"";
-            items += json_escape(deleted_at);
-            items += "\"";
+            items += "\",\"deleted_at\":";
+            if (deleted_at.empty())
+            {
+                items += "null";
+            }
+            else
+            {
+                items += "\"";
+                items += json_escape(deleted_at);
+                items += "\"";
+            }
         }
         items += "}";
     }
@@ -887,6 +954,49 @@ string HttpConnection::build_file_list_json(MYSQL_RES *result, long next_cursor,
     body += "},\"view\":\"";
     body += include_deleted ? "trash" : "active";
     body += "\"}";
+    return body;
+}
+
+string HttpConnection::build_public_file_list_json(MYSQL_RES *result, long next_cursor, int limit) const
+{
+    string items;
+    MYSQL_ROW row;
+    bool first = true;
+    int count = 0;
+
+    while (count < limit && (row = mysql_fetch_row(result)) != nullptr)
+    {
+        if (!first)
+        {
+            items += ",";
+        }
+        first = false;
+        ++count;
+
+        items += "{\"id\":";
+        items += row[0] ? row[0] : "0";
+        items += ",\"filename\":\"";
+        items += json_escape(row[1] ? row[1] : "");
+        items += "\",\"content_type\":\"";
+        items += json_escape(row[2] ? row[2] : "");
+        items += "\",\"size\":";
+        items += row[3] ? row[3] : "0";
+        items += ",\"owner\":\"";
+        items += json_escape(row[5] ? row[5] : "");
+        items += "\",\"created_at\":\"";
+        items += json_escape(row[4] ? row[4] : "");
+        items += "\"}";
+    }
+
+    string body = "{\"code\":0,\"files\":[";
+    body += items;
+    body += "],\"pagination\":{\"limit\":";
+    body += to_string(limit);
+    body += ",\"next_cursor\":";
+    body += to_string(next_cursor);
+    body += ",\"has_more\":";
+    body += next_cursor > 0 ? "true" : "false";
+    body += "}}";
     return body;
 }
 
@@ -1126,16 +1236,31 @@ HttpConnection::HTTP_CODE HttpConnection::handle_file_list()
     const long cursor = query_long_value("cursor", 0, 0, 2147483647L);
     const bool include_deleted = query_truthy_value("include_deleted") || query_truthy_value("trash");
 
-    string sql = "SELECT id, original_name, content_type, file_size, "
-                 "DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s'), is_public, owner_username, stored_name, "
-                 "COALESCE(content_sha256, ''), COALESCE(DATE_FORMAT(deleted_at, '%Y-%m-%d %H:%i:%s'), '') "
-                 "FROM files WHERE owner_username='" + escape_sql_value(m_current_user) + "'";
-    sql += include_deleted ? " AND deleted_at IS NOT NULL" : " AND deleted_at IS NULL";
+    string id_sql = "SELECT id FROM files FORCE INDEX(idx_owner_deleted_id) WHERE owner_username='" + escape_sql_value(m_current_user) + "'";
+    id_sql += include_deleted ? " AND deleted_at IS NOT NULL" : " AND deleted_at IS NULL";
     if (cursor > 0)
     {
-        sql += " AND id<" + to_string(cursor);
+        id_sql += " AND id<" + to_string(cursor);
     }
-    sql += " ORDER BY id DESC LIMIT " + to_string(limit + 1);
+    id_sql += " ORDER BY id DESC LIMIT " + to_string(limit + 1);
+
+    vector<long> page_ids;
+    long next_cursor = 0;
+    if (!fetch_page_ids(mysql, id_sql, limit, page_ids, next_cursor))
+    {
+        return INTERNAL_ERROR;
+    }
+
+    if (page_ids.empty())
+    {
+        set_memory_response(200, "OK", build_empty_private_file_list_json(limit, include_deleted), "application/json");
+        return MEMORY_REQUEST;
+    }
+
+    string sql = "SELECT id, original_name, content_type, file_size, "
+                 "DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s'), is_public, "
+                 "COALESCE(DATE_FORMAT(deleted_at, '%Y-%m-%d %H:%i:%s'), '') "
+                 "FROM files WHERE id IN (" + join_numeric_ids(page_ids) + ") ORDER BY id DESC";
 
     if (mysql_query(mysql, sql.c_str()) != 0)
     {
@@ -1148,16 +1273,7 @@ HttpConnection::HTTP_CODE HttpConnection::handle_file_list()
         return INTERNAL_ERROR;
     }
 
-    long next_cursor = 0;
-    if (mysql_num_rows(result) > static_cast<my_ulonglong>(limit))
-    {
-        mysql_data_seek(result, static_cast<my_ulonglong>(limit));
-        MYSQL_ROW row = mysql_fetch_row(result);
-        next_cursor = (row != nullptr && row[0] != nullptr) ? atol(row[0]) : 0;
-        mysql_data_seek(result, 0);
-    }
-
-    const string body = build_file_list_json(result, next_cursor, static_cast<int>(limit), include_deleted);
+    const string body = build_private_file_list_json(result, next_cursor, static_cast<int>(limit), include_deleted);
     mysql_free_result(result);
     set_memory_response(200, "OK", body, "application/json");
     return MEMORY_REQUEST;
@@ -1168,15 +1284,29 @@ HttpConnection::HTTP_CODE HttpConnection::handle_public_file_list()
     const long limit = query_long_value("limit", kDefaultListLimit, 1, kMaxListLimit);
     const long cursor = query_long_value("cursor", 0, 0, 2147483647L);
 
-    string sql = "SELECT id, original_name, content_type, file_size, "
-                 "DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s'), is_public, owner_username, stored_name, "
-                 "COALESCE(content_sha256, ''), '' "
-                 "FROM files WHERE is_public=1 AND deleted_at IS NULL";
+    string id_sql = "SELECT id FROM files FORCE INDEX(idx_public_deleted_id) WHERE is_public=1 AND deleted_at IS NULL";
     if (cursor > 0)
     {
-        sql += " AND id<" + to_string(cursor);
+        id_sql += " AND id<" + to_string(cursor);
     }
-    sql += " ORDER BY id DESC LIMIT " + to_string(limit + 1);
+    id_sql += " ORDER BY id DESC LIMIT " + to_string(limit + 1);
+
+    vector<long> page_ids;
+    long next_cursor = 0;
+    if (!fetch_page_ids(mysql, id_sql, limit, page_ids, next_cursor))
+    {
+        return INTERNAL_ERROR;
+    }
+
+    if (page_ids.empty())
+    {
+        set_memory_response(200, "OK", build_empty_public_file_list_json(limit), "application/json");
+        return MEMORY_REQUEST;
+    }
+
+    string sql = "SELECT id, original_name, content_type, file_size, "
+                 "DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s'), owner_username "
+                 "FROM files WHERE id IN (" + join_numeric_ids(page_ids) + ") ORDER BY id DESC";
 
     if (mysql_query(mysql, sql.c_str()) != 0)
     {
@@ -1189,16 +1319,7 @@ HttpConnection::HTTP_CODE HttpConnection::handle_public_file_list()
         return INTERNAL_ERROR;
     }
 
-    long next_cursor = 0;
-    if (mysql_num_rows(result) > static_cast<my_ulonglong>(limit))
-    {
-        mysql_data_seek(result, static_cast<my_ulonglong>(limit));
-        MYSQL_ROW row = mysql_fetch_row(result);
-        next_cursor = (row != nullptr && row[0] != nullptr) ? atol(row[0]) : 0;
-        mysql_data_seek(result, 0);
-    }
-
-    const string body = build_file_list_json(result, next_cursor, static_cast<int>(limit), false);
+    const string body = build_public_file_list_json(result, next_cursor, static_cast<int>(limit));
     mysql_free_result(result);
     set_memory_response(200, "OK", body, "application/json");
     return MEMORY_REQUEST;

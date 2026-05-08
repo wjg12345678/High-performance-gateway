@@ -3,66 +3,123 @@
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Atlas WebServer | 视频查看</title>
+        <title>Atlas WebServer | 媒体样例 | 视频</title>
         <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-        <link rel="stylesheet" href="./atlas.css">
-        <style>
-            .shell {
-                width: min(1180px, calc(100% - 32px));
-            }
-
-            .meta {
-                margin-top: 10px;
-                color: var(--muted);
-                line-height: 1.7;
-            }
-
-            .media-box {
-                margin-top: 22px;
-                padding: 18px;
-                border-radius: 26px;
-                border: 1px solid rgba(159, 77, 47, 0.14);
-                background: rgba(255, 250, 242, 0.82);
-            }
-
-            .media-box video {
-                display: block;
-                width: 100%;
-                border-radius: 18px;
-                background: #0d0d10;
-                box-shadow: var(--shadow);
-            }
-
-            .link-row {
-                display: flex;
-                flex-wrap: wrap;
-                gap: 12px;
-                margin-top: 18px;
-            }
-        </style>
+        <link rel="stylesheet" href="/atlas.css">
     </head>
-    <body>
-        <div class="shell">
-            <section class="hero">
-                <p class="eyebrow">Video Viewer</p>
-                <h1>视频查看页</h1>
-                <p>这里专门展示静态视频资源，不混排照片内容，方便单独检查视频播放效果。</p>
+    <body class="media-page video-page">
+        <div class="shell media-shell">
+            <div class="media-topbar">
+                <a class="link-button secondary" href="/media">返回媒体样例</a>
+                <span class="media-mark">Atlas Media Samples</span>
+            </div>
+
+            <section class="hero showcase-hero">
+                <div class="showcase-copy">
+                    <p class="eyebrow">Video Sample</p>
+                    <h1>视频样例页</h1>
+                    <p>这个页面只承载静态视频样例。这里单独强化播放器舞台、播放方式说明和资源参数，让它看起来更像专门为播放行为设计的页面。</p>
+
+                    <div class="stat-grid">
+                        <div class="stat-card">
+                            <span class="stat-label">Container</span>
+                            <strong>MP4</strong>
+                            <span>使用浏览器原生支持较好的容器格式，适合直接内联播放。</span>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-label">Playback</span>
+                            <strong>HTML5</strong>
+                            <span>保留控制条、进度定位和元数据预加载行为。</span>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-label">File Size</span>
+                            <strong>1.48 MiB</strong>
+                            <span>轻量资源，适合在示例页中快速打开和测试。</span>
+                        </div>
+                    </div>
+                </div>
+
+                <aside class="showcase-note">
+                    <p class="kicker">Screening Note</p>
+                    <p>新版视频页用更冷一些的配色和更明显的深色舞台，把注意力收进播放器本身，避免页面仍然像一张普通内容卡片。</p>
+                    <p>交互上保留最直接的浏览器原生控制，不加多余脚本，保证静态资源页依旧足够轻。</p>
+                </aside>
             </section>
 
-            <section class="card">
-                <p class="kicker">Video</p>
-                <h2>视频播放</h2>
-                <p class="meta">资源文件：<code>/video_20260419_214842_edit.mp4</code></p>
-                <div class="media-box">
-                    <video controls playsinline preload="metadata">
-                        <source src="/video_20260419_214842_edit.mp4" type="video/mp4">
-                        当前浏览器不支持内嵌视频播放。
-                    </video>
-                </div>
-                <div class="link-row">
-                    <a class="link-button" href="/video_20260419_214842_edit.mp4" target="_blank" rel="noopener">新窗口打开视频</a>
-                    <a class="link-button secondary" href="/media">返回资源入口</a>
-                </div>
+            <section class="showcase-layout">
+                <article class="card stage-card">
+                    <div class="stage-head">
+                        <div>
+                            <p class="kicker">Playback Stage</p>
+                            <h2>视频主播放区</h2>
+                            <p>播放器被当成核心内容处理，而不是随手塞进一个浅色盒子里，观看焦点会稳定很多。</p>
+                        </div>
+                        <div class="pill-row">
+                            <span class="info-pill">Inline Play</span>
+                            <span class="info-pill">Native Controls</span>
+                            <span class="info-pill">Metadata Preload</span>
+                        </div>
+                    </div>
+
+                    <figure class="media-stage video-stage">
+                        <video controls playsinline preload="metadata">
+                            <source src="/video_20260419_214842_edit.mp4" type="video/mp4">
+                            当前浏览器不支持内嵌视频播放。
+                        </video>
+                    </figure>
+
+                    <div class="stage-footer">
+                        <p class="stage-caption">通过更深的舞台背景、冷色信息模块和更大的播放器占比，页面视觉会自然偏向“播放现场”，而不是普通附件预览。</p>
+                        <div class="link-row">
+                            <a class="link-button" href="/video_20260419_214842_edit.mp4" target="_blank" rel="noopener">新窗口打开视频</a>
+                            <a class="link-button secondary" href="/media">返回媒体样例</a>
+                        </div>
+                    </div>
+                </article>
+
+                <aside class="detail-stack">
+                    <section class="card detail-card">
+                        <p class="kicker">Asset Spec</p>
+                        <h3>播放资源信息</h3>
+                        <div class="spec-grid">
+                            <div class="spec-item">
+                                <span class="spec-label">Path</span>
+                                <span class="spec-value"><code>/video_20260419_214842_edit.mp4</code></span>
+                            </div>
+                            <div class="spec-item">
+                                <span class="spec-label">Format</span>
+                                <span class="spec-value">MP4 容器，直接通过 HTML5 <code>video</code> 元素播放。</span>
+                            </div>
+                            <div class="spec-item">
+                                <span class="spec-label">Load</span>
+                                <span class="spec-value">使用 <code>preload="metadata"</code>，先拿到媒体信息，再按需继续缓冲。</span>
+                            </div>
+                            <div class="spec-item">
+                                <span class="spec-label">Weight</span>
+                                <span class="spec-value">约 1.48 MiB，适合做轻量演示和播放链路检查。</span>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="card detail-card">
+                        <p class="kicker">Why It Feels Better</p>
+                        <h3>视频页的变化点</h3>
+                        <div class="mini-points">
+                            <div class="mini-point">
+                                <strong>主题和照片页拉开了差异</strong>
+                                用更冷的放映气质处理视频，避免两个页面只有标题不同。
+                            </div>
+                            <div class="mini-point">
+                                <strong>播放器成为中心舞台</strong>
+                                深色底和更大的展示占比，让控制条和首帧更容易被感知。
+                            </div>
+                            <div class="mini-point">
+                                <strong>信息更像产品页</strong>
+                                资源格式、加载方式和用途被拆成独立模块，页面不再显得空。
+                            </div>
+                        </div>
+                    </section>
+                </aside>
             </section>
         </div>
     </body>

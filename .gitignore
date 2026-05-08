@@ -1,4 +1,7 @@
 server
+server-sanitize
+parser-chunked-test
+parser-chunked-test-sanitize
 *.o
 *.out
 *.log

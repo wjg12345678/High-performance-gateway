@@ -14,6 +14,20 @@
 volatile sig_atomic_t g_server_stop = 0;
 volatile sig_atomic_t g_server_reload = 0;
 
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer) || __has_feature(undefined_behavior_sanitizer)
+#define TWS_SANITIZER_BUILD 1
+#endif
+#endif
+
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_UNDEFINED__)
+#define TWS_SANITIZER_BUILD 1
+#endif
+
+#ifndef TWS_SANITIZER_BUILD
+#define TWS_SANITIZER_BUILD 0
+#endif
+
 namespace
 {
 volatile sig_atomic_t g_supervisor_stop = 0;
@@ -223,6 +237,7 @@ void install_worker_signal_handlers()
     sigaction(SIGINT, &term_action, nullptr);
     sigaction(SIGHUP, &term_action, nullptr);
 
+#if !TWS_SANITIZER_BUILD
     struct sigaction fatal_action;
     memset(&fatal_action, 0, sizeof(fatal_action));
     fatal_action.sa_handler = worker_fatal_handler;
@@ -234,6 +249,7 @@ void install_worker_signal_handlers()
     sigaction(SIGBUS, &fatal_action, nullptr);
     sigaction(SIGFPE, &fatal_action, nullptr);
     sigaction(SIGILL, &fatal_action, nullptr);
+#endif
 
     signal(SIGPIPE, SIG_IGN);
 }

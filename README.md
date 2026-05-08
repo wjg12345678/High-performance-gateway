@@ -1,61 +1,124 @@
 # Atlas WebServer
 
-![C++](https://img.shields.io/badge/C%2B%2B-11%2F17-blue)
+![C++](https://img.shields.io/badge/C%2B%2B-14%2B-blue)
 ![Platform](https://img.shields.io/badge/Platform-Linux%20%2B%20Docker-0f766e)
 ![Protocol](https://img.shields.io/badge/Protocol-HTTP%2F1.1%20%2B%20HTTPS-b45309)
 ![Database](https://img.shields.io/badge/Database-MySQL%208-2563eb)
 ![License](https://img.shields.io/badge/License-MIT-15803d)
 
-Atlas WebServer 是一个基于 C++、Linux `epoll` 和 MySQL 的鉴权文件服务项目。它的默认对外形态不是教学 CGI 演示页，而是围绕账号登录、Bearer Token 会话、私有文件管理、公开分享和操作审计组织起来的完整业务闭环。
+Atlas WebServer 是一个基于 C++、Linux `epoll`、线程池和 MySQL 的 HTTP/1.1 文件服务项目。当前代码已经从传统教学 CGI 示例扩展为一个带账号体系、Bearer Token 会话、私有文件管理、公开分享、操作审计、冒烟测试、parser 单测和 sanitizer CI 的完整工程。
 
-默认入口：
+## 当前能力
 
-- `GET /`：服务首页
-- `GET /login`、`GET /register`：账号入口
-- `GET /files`：文件管理台
-- `GET /share`：公开文件页
-- `POST /api/...`：程序化接口
-
-历史 `/0`、`/1`、`/2CGISQL.cgi`、`/3CGISQL.cgi`、`/5`、`/6`、`/7` 等教学遗留路由已默认关闭；仅在显式开启 `legacy_compat` 后才恢复。
-
-## 核心看点
-
-| 维度 | 内容 |
+| 维度 | 代码实现 |
 | --- | --- |
-| 并发模型 | 主 Reactor 负责接入，多个 SubReactor 处理连接事件，线程池执行业务任务 |
-| HTTP 能力 | HTTP/1.1、Keep-Alive、静态资源、JSON API、可选 HTTPS |
-| 业务能力 | 注册登录、Token 会话、私有接口、文件上传/下载/删除/公开分享、操作日志 |
-| 工程化 | 配置文件、环境变量覆盖、Docker Compose、健康检查、冒烟测试、压测报告与性能产物 |
-| 性能基准 | 轻读接口可达 `7k req/s` 量级，带鉴权轻接口可达 `7.4k req/s` 量级 |
+| 网络模型 | 主 Reactor 接收连接，多个 SubReactor 处理连接事件，线程池执行业务任务 |
+| HTTP 协议 | HTTP/1.1、Keep-Alive、静态资源、JSON API、`multipart/form-data`、`Transfer-Encoding: chunked`、可选 HTTPS |
+| 认证会话 | 注册、登录、PBKDF2 密码存储、Bearer Token、单用户新登录吊销旧 Token、当前/全部会话注销 |
+| 文件服务 | 私有文件列表、上传、下载、软删除、恢复、公开/取消公开、公开文件详情和下载 |
+| 上传链路 | Content-Length 请求体和 chunked 请求体；multipart body 支持流式临时文件落盘，避免大文件整体进内存 |
+| 可观测性 | 访问/操作日志、健康检查、benchmark CSV、invalid gate、wrk 原始输出、容器 stats 采样 |
+| 工程化 | Docker Compose、配置文件 + 环境变量覆盖、shell 冒烟测试、C++ parser 单测、ASan/UBSan 构建与 CI |
+
+历史教学路由 `/0`、`/1`、`/2CGISQL.cgi`、`/3CGISQL.cgi`、`/5`、`/6`、`/7` 默认关闭；只有显式开启 `legacy_compat` / `TWS_LEGACY_COMPAT=1` 才恢复。
 
 ## 快速开始
 
-推荐使用 Docker Compose 启动完整环境。
+推荐用 Docker Compose 启动 Web + MySQL：
 
 ```bash
 docker compose up -d --build
 curl -i http://127.0.0.1:9006/healthz
 ```
 
-默认端口：
+默认服务地址：
 
 | 服务 | 地址 |
 | --- | --- |
 | Web | `http://127.0.0.1:9006` |
 | MySQL | `127.0.0.1:3307` |
 
-停止服务：
+停止：
 
 ```bash
 docker compose down
 ```
 
-本地编译需要 Linux 环境、`g++`、`make`、`libmysqlclient`、`OpenSSL` 和可访问的 MySQL 8 实例。
+本地编译需要 Linux、`g++`、`make`、`default-libmysqlclient-dev` / `libmysqlclient`、`libssl-dev` / OpenSSL，并准备可访问的 MySQL 8 数据库：
 
 ```bash
 make server
 ./server
 ```
+
+默认读取 `server.conf`，环境变量会覆盖配置文件。Docker Compose 已默认注入 MySQL 连接参数。
+
+## 常用入口
+
+| 类型 | 路径 |
+| --- | --- |
+| 首页 | `GET /` |
+| 账号页面 | `GET /login`、`GET /register` |
+| 文件页面 | `GET /files`、`GET /share` |
+| 媒体页面 | `GET /media`、`GET /media/photo`、`GET /media/video` |
+| 健康检查 | `GET /healthz`、`HEAD /healthz` |
+| API | `POST /api/...`、`GET /api/private/...`、`GET /api/files/public...` |
+
+## API 概览
+
+通用约定：
+
+- Base URL：`http://127.0.0.1:9006`
+- JSON 请求使用 `Content-Type: application/json`
+- 私有接口使用 `Authorization: Bearer <token>`
+- 成功响应通常包含 `"code":0`
+- 错误响应通常为 `{"code":<http_status>,"message":"..."}`
+
+主要接口：
+
+| 分组 | 接口 |
+| --- | --- |
+| 健康检查 | `GET /healthz` |
+| 调试回显 | `POST /api/echo` |
+| 认证 | `POST /api/register`、`POST /api/login` |
+| 会话 | `GET /api/private/ping`、`POST /api/private/logout` |
+| 操作日志 | `GET /api/private/operations`、`DELETE /api/private/operations/:id` |
+| 私有文件 | `GET /api/private/files`、`POST /api/private/files`、`GET /api/private/files/:id/download` |
+| 文件管理 | `DELETE /api/private/files/:id`、`POST /api/private/files/:id/restore`、`POST /api/private/files/:id/visibility` |
+| 公开文件 | `GET /api/files/public`、`GET /api/files/public/:id`、`GET /api/files/public/:id/download` |
+
+完整字段和响应示例见 [docs/api.md](docs/api.md)。
+
+### 认证示例
+
+```bash
+curl -sS -X POST http://127.0.0.1:9006/api/register \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"demo","passwd":"123456"}'
+
+LOGIN_RESPONSE="$(curl -sS -X POST http://127.0.0.1:9006/api/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"demo","passwd":"123456"}')"
+TOKEN="$(printf '%s\n' "$LOGIN_RESPONSE" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')"
+
+curl -sS http://127.0.0.1:9006/api/private/ping \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### 文件上传示例
+
+主上传路径是 `multipart/form-data`：
+
+```bash
+curl -sS -X POST http://127.0.0.1:9006/api/private/files \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Expect:' \
+  -F 'file=@README.md;type=text/markdown' \
+  -F 'filename=README.md' \
+  -F 'is_public=false'
+```
+
+HTTP parser 也支持 `Transfer-Encoding: chunked`。仓库里的 `scripts/test_chunked_api.sh` 使用 raw socket 发送真实 chunked 请求，覆盖 `/api/echo` 和 multipart 文件上传。
 
 ## 架构
 
@@ -65,192 +128,162 @@ flowchart LR
     Main[Main Reactor]
     Sub[SubReactors]
     Pool[Thread Pool]
-    HTTP[HTTP Core / API / File Service]
+    HTTP[HTTP Core]
+    API[Auth / API]
+    Files[File Service]
     DB[(MySQL)]
     FS[(root/uploads)]
     Log[Log]
 
     Client --> Main --> Sub --> Pool --> HTTP
-    HTTP --> DB
-    HTTP --> FS
+    HTTP --> API --> DB
+    HTTP --> Files --> DB
+    Files --> FS
     HTTP --> Log
 ```
 
-主 Reactor 监听端口并接收新连接，新连接按轮询分配给 SubReactor。SubReactor 维护连接读写事件和超时回收，业务处理由线程池执行。HTTP 层负责请求解析、路由、鉴权、数据库访问、文件操作和响应生成。
+核心流程：
 
-更多细节见 [架构说明](docs/architecture.md) 和 [请求时序](docs/request-sequence.md)。
+1. `main.cpp` 读取 `server.conf`，再应用环境变量和命令行覆盖。
+2. `webserver.cpp` 初始化日志、TLS、MySQL 连接池、线程池和监听 socket。
+3. 主 Reactor 接收连接，按轮询分配到 SubReactor。
+4. `http/core/io.cpp` 负责 socket / TLS 读写与 ring buffer。
+5. `http/core/parser.cpp` 解析请求行、Header、Content-Length body 和 chunked body。
+6. `http/core/router.cpp` 分发静态资源、认证接口、文件接口和公开文件接口。
+7. `http/files/file_service.cpp` 处理上传临时文件、元数据入库、下载、回收站和公开分享。
+
+更多细节见 [docs/architecture.md](docs/architecture.md) 和 [docs/request-sequence.md](docs/request-sequence.md)。
 
 ## 目录结构
 
 ```text
 .
-|-- main.cpp                     # 程序入口
-|-- webserver.cpp                # 主 Reactor 与服务启动
+|-- main.cpp                     # 程序入口、daemon supervisor、信号处理
+|-- webserver.cpp                # 服务初始化、主 Reactor、连接分发
 |-- webserver_sub_reactor.cpp    # SubReactor 事件循环
-|-- config.cpp / config.h        # 配置解析
+|-- config.cpp / config.h        # 配置文件、环境变量、命令行解析
 |-- server.conf                  # 默认配置
 |-- http/
-|   |-- core/                    # HTTP 解析、路由、IO、响应
-|   |-- api/                     # 认证、会话、私有接口、操作日志
-|   `-- files/                   # 文件管理与元数据
+|   |-- core/                    # HTTP parser、router、IO、response、runtime
+|   |-- api/                     # 认证、会话、操作日志
+|   `-- files/                   # 文件存储、上传解析、公开分享
 |-- CGImysql/                    # MySQL 连接池
-|-- threadpool/                  # 线程池
+|-- threadpool/                  # 动态线程池与任务队列
 |-- timer/                       # 连接超时管理
-|-- root/                        # 静态页面与上传目录
-|-- scripts/                     # 测试、压测与配套脚本
-|-- docs/                        # 文档与结构化性能数据
-`-- reports/                     # 压测与性能产物
+|-- log/                         # 同步/异步日志
+|-- root/                        # 前端页面、静态资源、上传目录
+|-- scripts/                     # 冒烟测试、API 测试、benchmark、perf 脚本
+|-- tests/                       # C++ parser 单测
+|-- docs/                        # 架构、API、benchmark 和 perf 文档
+|-- docker/                      # Docker 辅助文件与 MySQL 初始化 SQL
+`-- .github/workflows/           # CI：parser + ASan/UBSan + chunked API 集成
 ```
-
-## API 概览
-
-通用约定：
-
-| 项 | 说明 |
-| --- | --- |
-| Base URL | `http://127.0.0.1:9006` |
-| JSON 接口 | 默认使用 `application/json` |
-| 私有接口 | `Authorization: Bearer <token>` |
-| 成功响应 | 通常返回 `{"code":0,...}` |
-| 错误响应 | 通常返回 `{"code":<http_status>,"message":"..."}` |
-
-主要接口：
-
-| 分组 | 接口 |
-| --- | --- |
-| 健康检查 | `GET /healthz` |
-| 页面入口 | `GET /`、`/login`、`/register`、`/welcome`、`/files`、`/share`、`/media` |
-| 认证 | `POST /api/register`、`POST /api/login` |
-| 私有接口 | `GET /api/private/ping`、`POST /api/private/logout`、`GET /api/private/operations`、`DELETE /api/private/operations/:id` |
-| 文件接口 | `GET /api/private/files`、`POST /api/private/files`、`GET /api/private/files/:id/download`、`DELETE /api/private/files/:id`、`POST /api/private/files/:id/visibility` |
-| 公开文件 | `GET /api/files/public`、`GET /api/files/public/:id`、`GET /api/files/public/:id/download` |
-
-完整字段、响应示例和错误码见 [API 文档](docs/api.md)。
 
 ## 配置
 
-默认读取 [server.conf](server.conf)，环境变量优先级高于配置文件。常用配置如下：
+默认配置在 `server.conf`。环境变量优先级高于配置文件，命令行参数可覆盖部分基础项，随后环境变量会再次生效。
 
-| 配置 | 环境变量 | 默认值 | 说明 |
+| 配置项 | 环境变量 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `port` | `TWS_PORT` | `9006` | 服务监听端口 |
-| `log_write` | `TWS_LOG_WRITE` | `1` | 日志模式，`0` 同步，`1` 异步 |
-| `trig_mode` | `TWS_TRIG_MODE` | `3` | epoll 触发模式，默认 `ET/ET` |
-| `thread_num` | `TWS_THREAD_NUM` | `8` | 基础工作线程数 |
-| `threadpool_max_threads` | `TWS_THREADPOOL_MAX_THREADS` | `8` | 线程池最大线程数 |
-| `threadpool_queue_mode` | `TWS_THREADPOOL_QUEUE_MODE` | `mutex` | 任务队列模式 |
+| `port` | `TWS_PORT` | `9006` | Web 监听端口 |
+| `log_write` | `TWS_LOG_WRITE` | `1` | `0` 同步日志，`1` 异步日志 |
+| `log_level` | `TWS_LOG_LEVEL` | `1` | 日志级别 |
+| `trig_mode` | `TWS_TRIG_MODE` | `3` | epoll 模式，默认 listen ET + conn ET |
+| `opt_linger` | `TWS_OPT_LINGER` | `0` | socket linger 策略 |
 | `sql_num` | `TWS_SQL_NUM` | `8` | MySQL 连接池大小 |
-| `conn_timeout` | `TWS_CONN_TIMEOUT` | `15` | HTTP 空闲连接超时秒数 |
-| `https_enable` | `TWS_HTTPS_ENABLE` | `0` | 是否启用 HTTPS |
-| `legacy_compat` | `TWS_LEGACY_COMPAT` | `0` | 是否恢复旧教学路由 `/0` `/1` `/2CGISQL.cgi` 等 |
-| `db_host` | `TWS_DB_HOST` | `127.0.0.1` | 数据库主机 |
-| `db_port` | `TWS_DB_PORT` | `3306` | 数据库端口 |
-| `db_user` | `TWS_DB_USER` | `root` | 数据库用户名 |
-| `db_password` | `TWS_DB_PASSWORD` | 空 | 数据库密码 |
-| `db_name` | `TWS_DB_NAME` | `qgydb` | 数据库名 |
+| `thread_num` | `TWS_THREAD_NUM` | `8` | 基础工作线程数 / SubReactor 数 |
+| `threadpool_max_threads` | `TWS_THREADPOOL_MAX_THREADS` | `8` | 线程池最大线程数 |
+| `threadpool_idle_timeout` | `TWS_THREADPOOL_IDLE_TIMEOUT` | `30` | 动态线程空闲回收秒数 |
+| `threadpool_queue_mode` | `TWS_THREADPOOL_QUEUE_MODE` | `mutex` | 任务队列实现，支持 `mutex` / `lockfree` |
+| `mysql_idle_timeout` | `TWS_MYSQL_IDLE_TIMEOUT` | `60` | MySQL 连接空闲检查 |
+| `upload_max_bytes` | `TWS_UPLOAD_MAX_BYTES` | `104857600` | 单文件上传上限，默认 100 MiB |
+| `conn_timeout` | `TWS_CONN_TIMEOUT` | `15` | HTTP 连接空闲超时 |
+| `close_log` | `TWS_CLOSE_LOG` | `0` | `1` 关闭日志 |
+| `daemon_mode` | `TWS_DAEMON_MODE` | `0` | daemon supervisor 模式 |
+| `pid_file` | `TWS_PID_FILE` | `./atlas-webserver.pid` | daemon pid 文件 |
+| `https_enable` | `TWS_HTTPS_ENABLE` | `0` | 开启 HTTPS |
+| `https_cert_file` | `TWS_HTTPS_CERT_FILE` | `./certs/server.crt` | TLS 证书 |
+| `https_key_file` | `TWS_HTTPS_KEY_FILE` | `./certs/server.key` | TLS 私钥 |
+| `legacy_compat` | `TWS_LEGACY_COMPAT` | `0` | 开启教学遗留路由和兼容上传 |
+| `db_host` | `TWS_DB_HOST` | `127.0.0.1` | MySQL host |
+| `db_port` | `TWS_DB_PORT` | `3306` | MySQL port |
+| `db_user` | `TWS_DB_USER` | `root` | MySQL 用户 |
+| `db_password` | `TWS_DB_PASSWORD` | 空 | MySQL 密码，生产环境建议只用环境变量 |
+| `db_name` | `TWS_DB_NAME` | `qgydb` | MySQL 数据库 |
 
-示例：
+如果前面使用 Nginx 反向代理，`client_max_body_size` 应不小于 `upload_max_bytes` / `TWS_UPLOAD_MAX_BYTES`。示例见 [deploy/nginx/atlas-webserver.conf.example](deploy/nginx/atlas-webserver.conf.example)。
 
-```bash
-TWS_LOG_WRITE=0 TWS_THREADPOOL_QUEUE_MODE=mutex docker compose up -d --build
-```
+## 构建与测试
 
-敏感配置建议通过环境变量注入，不要写入配置文件。
-
-## 测试
-
-服务启动后执行冒烟测试：
-
-```bash
-./scripts/run_smoke_suite.sh
-```
-
-常用分项脚本：
-
-| 脚本 | 覆盖范围 |
+| 命令 | 说明 |
 | --- | --- |
-| `./scripts/test_auth.sh` | 注册、登录、登出 |
-| `./scripts/test_private_api.sh` | Bearer Token 鉴权链路 |
-| `./scripts/test_files.sh` | 文件上传、列表、下载、删除 |
-| `./scripts/test_file_workflow.sh` | 文件流程回归入口 |
+| `make server` | 构建普通服务端二进制 |
+| `make server-sanitize` | 构建 ASan/UBSan 服务端二进制 |
+| `make test-parser` | 运行 C++ parser 单测 |
+| `make test-parser-sanitize` | 在 ASan/UBSan 下运行 parser 单测 |
+| `scripts/run_smoke_suite.sh` | 运行认证、私有接口、文件、chunked API 冒烟测试 |
+| `scripts/test_chunked_api.sh` | 发送真实 chunked 请求，验证 echo 和 multipart 上传 |
+| `scripts/run_benchmark_suite.sh` | 执行 wrk benchmark 并生成 CSV / gate 文件 |
+| `make clean` | 清理构建产物 |
 
-## 性能摘要
+CI 工作流位于 `.github/workflows/ci.yml`，会执行：
 
-完整性能报告、结构化数据和 FlameGraph 产物说明见 [性能报告](docs/benchmark.md)、[benchmark.csv](docs/benchmark.csv) 和 [FlameGraph 指南](docs/perf-flamegraph.md)。
+1. `make test-parser-sanitize`
+2. `make server-sanitize`
+3. 初始化 MySQL schema
+4. 启动 ASan/UBSan server
+5. 运行 `scripts/test_chunked_api.sh`
+6. 检查 server 日志中是否出现 AddressSanitizer / UBSan 错误
 
-FlameGraph 原始产物是交互式 SVG，GitHub 对带脚本的 SVG 预览支持有限。仓库同时保留 PNG 预览图，适合在 GitHub 页面直接查看：
+## Benchmark 与发布口径
 
-- [healthz_flamegraph.png](reports/perf/previews/healthz_flamegraph.png)
-- [private_files_flamegraph.png](reports/perf/previews/private_files_flamegraph.png)
+仓库不在 README 发布未经 gate 校验的 headline 性能数字。`scripts/run_benchmark_suite.sh` 会为每个 case 生成：
 
-### 发布基准
+- `*.wrk.txt`：wrk 原始输出
+- `*.stats.csv`：Web / MySQL 容器 CPU、内存采样
+- `*.gate.txt`：有效性判定明细
+- `results.csv`：结构化结果，包含 `valid` 和 `invalid_reason`
 
-测试环境：本地 MacBook Pro，Docker Compose 同机部署 Web 与 MySQL，`wrk --latency`，`TWS_LOG_WRITE=0`，`TWS_THREAD_NUM=8`，`TWS_SQL_NUM=8`，HTTPS 关闭。不同机器和容器资源下绝对数值会变化，建议跨环境对比前重新采集。
+一个 benchmark case 只有同时满足以下条件才视为有效：
 
-| 场景 | 并发 | Req/s | P99 | 结论 |
-| --- | ---: | ---: | --- | --- |
-| `GET /healthz` | 1000 | 7581.63 | 425.25ms | 轻量读路径可达 `7k req/s` 量级 |
-| `GET /` | 1000 | 6610.76 | 313.45ms | 静态资源路径稳定在 `6k req/s` 量级 |
-| `GET /api/private/ping` | 1000 | 7497.74 | 364.37ms | Bearer Token 鉴权轻接口可达 `7k req/s` 量级 |
-| `GET /api/private/files` | 1000 | 3127.67 | 930.34ms | 文件列表受 MySQL 影响明显 |
-| `POST /api/login` | 100 | 875.10 | 295.95ms | 登录是主要写路径之一 |
-| `POST /api/private/files` | 100 | 330.92 | 697.62ms | 上传链路受鉴权、写库、Base64 和磁盘写入叠加影响 |
+- wrk `Socket errors` 总数为 `0`
+- Web / MySQL 容器 `RestartCount` 压测前后不增长
+- 压测窗口内 Web 日志没有 `server received SIGSEGV`
 
-### 核心对比
+当前仓库里的历史数据和图表用于开发机观察与瓶颈定位，不作为正式发布基准。完整说明见 [docs/benchmark.md](docs/benchmark.md)、[docs/benchmark.csv](docs/benchmark.csv) 和 [docs/perf-flamegraph.md](docs/perf-flamegraph.md)。
 
-日志模式对比，固定 `200` 并发：
+## 数据与存储
 
-| 接口 | 异步日志 `TWS_LOG_WRITE=1` | 同步日志 `TWS_LOG_WRITE=0` | 结果 |
-| --- | ---: | ---: | --- |
-| `/healthz` | 4110.59 req/s | 6793.47 req/s | 同步日志更优 |
-| `/api/login` | 456.86 req/s | 633.83 req/s | 同步日志更优 |
-| `/api/private/files` `GET` | 2045.00 req/s | 2780.26 req/s | 同步日志更优 |
-| `/api/private/files` `POST` | 197.22 req/s | 291.28 req/s | 同步日志更优 |
+Docker 初始化 SQL 位于 `docker/mysql/init.sql`，主要表包括：
 
-`epoll` 触发模式对比，固定 `GET /api/private/ping`、`500` 并发：
+| 表 | 说明 |
+| --- | --- |
+| `user` | 用户与密码哈希 |
+| `user_sessions` | Bearer Token 会话 |
+| `files` | 文件元数据、公开状态、软删除状态、SHA-256 |
+| `operation_logs` | 登录、上传、删除等操作记录 |
 
-| 模式 | Req/s | P99 | Errors |
-| --- | ---: | --- | --- |
-| `0 LT/LT` | 7604.08 | 417.95ms | `read 566, timeout 56` |
-| `1 LT/ET` | 10067.04 | 412.17ms | `read 534, timeout 31` |
-| `2 ET/LT` | 10399.59 | 239.96ms | `read 551, timeout 12` |
-| `3 ET/ET` | 10687.70 | 255.84ms | `read 480, timeout 26` |
+上传文件默认存储在 `root/uploads/`，该目录在 Docker Compose 中挂载到宿主机。
 
-结论：当前实现中 `ET/ET` 是综合吞吐和延迟最合适的默认配置；同步日志在这台测试机器上明显优于异步日志。
+## 安全与限制
 
-### 非稳定快照
-
-2026-04-23 曾以当前默认方案做过一轮 `wrk -t4 -d15s` 对比压测，部分接口相对早期基准提升明显。但该轮期间 `web` 容器发生 4 次重启并出现 `server received SIGSEGV`，因此只作为问题定位前的参考快照，不作为正式发布基准。
-
-| 接口 | 并发 | 早期 Req/s | 快照 Req/s | 变化 |
-| --- | ---: | ---: | ---: | ---: |
-| `/healthz` | 500 | 4476.61 | 8368.53 | +86.9% |
-| `/api/private/ping` | 500 | 5077.29 | 9620.54 | +89.5% |
-| `/api/login` | 500 | 426.50 | 726.94 | +70.4% |
-| `/api/private/files` `GET` | 500 | 2173.21 | 2319.48 | +6.7% |
-| `/api/private/files` `POST` | 500 | 320.38 | 303.31 | -5.3% |
-
-## 运维说明
-
-- Docker Compose 默认挂载 `./root/uploads` 保存上传文件。
-- MySQL 数据通过 Docker volume `mysql-data` 持久化。
-- 健康检查接口为 `GET /healthz`。
-- 启用 HTTPS 前需要准备证书，并配置 `https_cert_file` 和 `https_key_file`。
-- 生产环境应通过环境变量注入数据库密码、Token 等敏感配置。
+- 默认关闭 HTTPS；生产环境需配置 `https_enable=1`、证书和私钥。
+- 数据库密码、Token 相关配置应通过环境变量注入，不建议写入仓库配置文件。
+- 默认主上传路径只接受 `multipart/form-data`；兼容 JSON/base64 上传仅在 `legacy_compat=1` 时启用。
+- 当前 parser 支持 chunked request body，但响应仍使用 `Content-Length`。
+- 默认单文件上传上限为 100 MiB，可用 `TWS_UPLOAD_MAX_BYTES` 调整。
 
 ## 文档索引
 
 | 文档 | 内容 |
 | --- | --- |
-| [docs/architecture.md](docs/architecture.md) | 架构与运行时模型 |
+| [docs/api.md](docs/api.md) | API 字段、参数和响应示例 |
+| [docs/architecture.md](docs/architecture.md) | 架构说明 |
 | [docs/request-sequence.md](docs/request-sequence.md) | 请求处理时序 |
-| [docs/api.md](docs/api.md) | API 字段、示例和错误码 |
-| [docs/file-module.md](docs/file-module.md) | 文件模块、权限和存储 |
-| [docs/benchmark.md](docs/benchmark.md) | 完整压测报告 |
-| [docs/benchmark.csv](docs/benchmark.csv) | 结构化性能数据 |
-| [docs/perf-flamegraph.md](docs/perf-flamegraph.md) | FlameGraph 产物说明 |
-| [RELEASE_NOTES.md](RELEASE_NOTES.md) | 发布说明 |
+| [docs/file-module.md](docs/file-module.md) | 文件模块设计 |
+| [docs/benchmark.md](docs/benchmark.md) | benchmark 报告和发布口径 |
+| [docs/perf-flamegraph.md](docs/perf-flamegraph.md) | perf / FlameGraph 指南 |
 
-## 许可证
+## License
 
-[MIT License](LICENSE)
+MIT License. See [LICENSE](LICENSE).
