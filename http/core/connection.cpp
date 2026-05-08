@@ -210,6 +210,15 @@ void HttpConnection::refresh_active()
     m_last_active = time(nullptr);
 }
 
+void HttpConnection::set_request_target(const string &target, const string &query)
+{
+    m_url_storage = target;
+    m_url = m_url_storage.empty() ? nullptr : const_cast<char *>(m_url_storage.c_str());
+
+    m_query_string_storage = query;
+    m_query_string = m_query_string_storage.empty() ? nullptr : const_cast<char *>(m_query_string_storage.c_str());
+}
+
 //初始化新接受的连接
 //check_state默认为分析请求行状态
 void HttpConnection::init()
@@ -249,6 +258,8 @@ void HttpConnection::init()
     improv = 0;
     m_response_status = 200;
     m_request_body.clear();
+    m_url_storage.clear();
+    m_query_string_storage.clear();
     m_response_body_storage.clear();
     m_extra_headers.clear();
     m_form_data.clear();

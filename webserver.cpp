@@ -325,7 +325,11 @@ void WebServer::dealwithread(int sockfd)
         return;
     }
 
-    if (users[sockfd].read_once())
+    users[sockfd].lock_request();
+    const bool read_ok = users[sockfd].read_once();
+    users[sockfd].unlock_request();
+
+    if (read_ok)
     {
         LOG_INFO("deal with the client(%s)", inet_ntoa(users[sockfd].get_address()->sin_addr));
         if (!m_pool->append_p(&users[sockfd]))
@@ -359,7 +363,11 @@ void WebServer::dealwithwrite(int sockfd)
         return;
     }
 
-    if (users[sockfd].write())
+    users[sockfd].lock_request();
+    const bool write_ok = users[sockfd].write();
+    users[sockfd].unlock_request();
+
+    if (write_ok)
     {
         LOG_INFO("send data to the client(%s)", inet_ntoa(users[sockfd].get_address()->sin_addr));
         return;

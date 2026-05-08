@@ -130,6 +130,8 @@ private:
     // Core protocol and connection handling.
     void init();
     bool read_once_et();
+    bool flush_streamed_body_from_read_buffer();
+    void set_request_target(const string &target, const string &query = "");
     void reset_ring_buffer(ring_buffer &ring, char *storage, int capacity);
     bool ensure_read_capacity(int required_size);
     bool ensure_write_capacity(int required_size);
@@ -317,6 +319,8 @@ private:
     int m_response_status;
     char m_response_status_title[64];
     string m_request_body;
+    string m_url_storage;
+    string m_query_string_storage;
     string m_response_body_storage;
     string m_extra_headers;
     map<string, string> m_form_data;

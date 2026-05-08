@@ -9,16 +9,6 @@ namespace
 {
 const int kSessionTtlSeconds = 7 * 24 * 3600;
 
-void copy_route_target(char *target, const char *path, size_t capacity)
-{
-    if (capacity == 0)
-    {
-        return;
-    }
-    strncpy(target, path, capacity - 1);
-    target[capacity - 1] = '\0';
-}
-
 struct JsonResponseSpec
 {
     int status;
@@ -103,7 +93,7 @@ HttpConnection::HTTP_CODE HttpConnection::handle_auth_request(bool is_register, 
             return MEMORY_REQUEST;
         }
 
-        copy_route_target(m_url, success ? "/login" : "/register-error", READ_BUFFER_INITIAL_SIZE);
+        set_request_target(success ? "/login" : "/register-error");
         return do_request();
     }
 
@@ -143,7 +133,7 @@ HttpConnection::HTTP_CODE HttpConnection::handle_auth_request(bool is_register, 
         return MEMORY_REQUEST;
     }
 
-    copy_route_target(m_url, success ? "/welcome" : "/login-error", READ_BUFFER_INITIAL_SIZE);
+    set_request_target(success ? "/welcome" : "/login-error");
     return do_request();
 }
 

@@ -426,50 +426,61 @@ public:
     bool read_part_body(const string &boundary, Sink &sink, bool &is_final)
     {
         const string delimiter = "\r\n--" + boundary;
-        while (true)
+        auto consume_delimiter = [&]() -> int
         {
             const size_t pos = m_buffer.find(delimiter);
-            if (pos != string::npos)
+            if (pos == string::npos)
             {
-                if (pos > 0 && !sink.write(m_buffer.data(), pos))
-                {
-                    return false;
-                }
+                return -1;
+            }
 
-                m_buffer.erase(0, pos + delimiter.size());
-                while (m_buffer.size() < 2 && !m_eof)
+            if (pos > 0 && !sink.write(m_buffer.data(), pos))
+            {
+                return 0;
+            }
+
+            m_buffer.erase(0, pos + delimiter.size());
+            while (m_buffer.size() < 2 && !m_eof)
+            {
+                fill();
+            }
+
+            if (m_buffer.size() < 2)
+            {
+                return 0;
+            }
+
+            if (m_buffer.compare(0, 2, "--") == 0)
+            {
+                m_buffer.erase(0, 2);
+                is_final = true;
+                if (m_buffer.size() < 2 && !m_eof)
                 {
                     fill();
                 }
-
-                if (m_buffer.size() < 2)
-                {
-                    return false;
-                }
-
-                if (m_buffer.compare(0, 2, "--") == 0)
+                if (m_buffer.size() >= 2 && m_buffer.compare(0, 2, "\r\n") == 0)
                 {
                     m_buffer.erase(0, 2);
-                    is_final = true;
-                    if (m_buffer.size() < 2 && !m_eof)
-                    {
-                        fill();
-                    }
-                    if (m_buffer.size() >= 2 && m_buffer.compare(0, 2, "\r\n") == 0)
-                    {
-                        m_buffer.erase(0, 2);
-                    }
-                    return sink.finish();
                 }
+                return sink.finish() ? 1 : 0;
+            }
 
-                if (m_buffer.compare(0, 2, "\r\n") == 0)
-                {
-                    m_buffer.erase(0, 2);
-                    is_final = false;
-                    return sink.finish();
-                }
+            if (m_buffer.compare(0, 2, "\r\n") == 0)
+            {
+                m_buffer.erase(0, 2);
+                is_final = false;
+                return sink.finish() ? 1 : 0;
+            }
 
-                return false;
+            return 0;
+        };
+
+        while (true)
+        {
+            int delimiter_status = consume_delimiter();
+            if (delimiter_status >= 0)
+            {
+                return delimiter_status == 1;
             }
 
             if (m_eof)
@@ -480,6 +491,12 @@ public:
             if (!fill() && m_eof)
             {
                 return false;
+            }
+
+            delimiter_status = consume_delimiter();
+            if (delimiter_status >= 0)
+            {
+                return delimiter_status == 1;
             }
 
             if (m_buffer.size() > delimiter.size())

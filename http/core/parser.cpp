@@ -121,6 +121,7 @@ HttpConnection::HTTP_CODE HttpConnection::parse_request_line(char *text)
     }
     if (strlen(m_url) == 1)
         strcat(m_url, "index.html");
+    set_request_target(m_url, m_query_string ? m_query_string : "");
     m_check_state = CHECK_STATE_HEADER;
     return NO_REQUEST;
 }

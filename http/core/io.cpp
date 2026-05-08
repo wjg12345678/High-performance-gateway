@@ -407,6 +407,13 @@ bool HttpConnection::read_once()
             if (bytes_read > 0)
             {
                 m_has_new_data = true;
+                if (m_stream_body_file != nullptr && m_check_state == CHECK_STATE_CONTENT)
+                {
+                    if (!flush_streamed_body_from_read_buffer())
+                    {
+                        return false;
+                    }
+                }
                 continue;
             }
 
@@ -444,57 +451,118 @@ bool HttpConnection::read_once_et()
     bool has_read = false;
     int recvs_this_event = 0;
 
-    while (ring_writable(m_read_ring) > 0)
+    while (true)
     {
-        int bytes_read = ring_recv(m_read_ring);
-        if (bytes_read > 0)
+        while (ring_writable(m_read_ring) > 0)
         {
-            has_read = true;
-            m_has_new_data = true;
-            ++recvs_this_event;
-            if (recvs_this_event >= ET_READ_EVENT_MAX_RECVS)
+            int bytes_read = ring_recv(m_read_ring);
+            if (bytes_read > 0)
             {
-                sync_read_buffer();
-                refresh_active();
-                modfd(m_epollfd, m_sockfd, wait_event_for_io(EPOLLIN), m_TRIGMode);
-                return true;
+                has_read = true;
+                m_has_new_data = true;
+                if (m_stream_body_file != nullptr && m_check_state == CHECK_STATE_CONTENT)
+                {
+                    if (!flush_streamed_body_from_read_buffer())
+                    {
+                        return false;
+                    }
+                }
+                ++recvs_this_event;
+                if (recvs_this_event >= ET_READ_EVENT_MAX_RECVS)
+                {
+                    sync_read_buffer();
+                    refresh_active();
+                    modfd(m_epollfd, m_sockfd, wait_event_for_io(EPOLLIN), m_TRIGMode);
+                    return true;
+                }
+                continue;
             }
-            continue;
-        }
 
-        if (bytes_read == 0)
-        {
+            if (bytes_read == 0)
+            {
+                return false;
+            }
+
+            if (errno == EINTR)
+            {
+                continue;
+            }
+
+            if (errno == EAGAIN || errno == EWOULDBLOCK)
+            {
+                if (has_read)
+                {
+                    sync_read_buffer();
+                    refresh_active();
+                }
+                modfd(m_epollfd, m_sockfd, wait_event_for_io(EPOLLIN), m_TRIGMode);
+                return has_read;
+            }
+
             return false;
         }
 
-        if (errno == EINTR)
+        if (ensure_read_capacity(m_read_ring.capacity * 2))
         {
             continue;
         }
 
-        if (errno == EAGAIN || errno == EWOULDBLOCK)
+        sync_read_buffer();
+
+        if (m_check_state != CHECK_STATE_CONTENT)
         {
-            if (has_read)
+            HTTP_CODE probe_code = process_read();
+            if (probe_code == NO_REQUEST && m_stream_body_file != nullptr && m_check_state == CHECK_STATE_CONTENT)
             {
-                sync_read_buffer();
                 refresh_active();
+                continue;
             }
-            modfd(m_epollfd, m_sockfd, wait_event_for_io(EPOLLIN), m_TRIGMode);
-            return has_read;
+        }
+        else if (m_stream_body_file != nullptr)
+        {
+            if (!flush_streamed_body_from_read_buffer())
+            {
+                return false;
+            }
+            refresh_active();
+            continue;
         }
 
-        return false;
-    }
-
-    if (!ensure_read_capacity(m_read_ring.capacity * 2))
-    {
         if (0 == m_close_log)
         {
             Log::get_instance()->write_log(2, "read buffer reached max size in ET mode, sockfd=%d", m_sockfd);
             Log::get_instance()->flush();
         }
-        sync_read_buffer();
         return false;
     }
-    return read_once_et();
+}
+
+bool HttpConnection::flush_streamed_body_from_read_buffer()
+{
+    if (m_stream_body_file == nullptr || m_check_state != CHECK_STATE_CONTENT)
+    {
+        return true;
+    }
+
+    sync_read_buffer();
+    const long available = m_read_idx - m_body_start_idx;
+    if (available <= 0)
+    {
+        return true;
+    }
+
+    const long remaining = m_content_length - m_stream_body_bytes_received;
+    const long chunk_len = available > remaining ? remaining : available;
+    if (chunk_len <= 0)
+    {
+        return true;
+    }
+
+    if (!append_streamed_body_chunk(m_read_buf.data() + m_body_start_idx, static_cast<size_t>(chunk_len)))
+    {
+        return false;
+    }
+
+    reset_streamed_body_buffer();
+    return true;
 }
