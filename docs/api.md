@@ -19,7 +19,21 @@
 示例响应：
 
 ```json
-{"code":0,"message":"ok"}
+{"code":0,"status":"ok"}
+```
+
+## Debug API
+
+### `POST /api/echo`
+
+调试回显接口，用于验证普通请求体和 `Transfer-Encoding: chunked` 请求体解析。
+
+请求体可使用任意文本或 JSON，响应会返回原始 body 和请求 `Content-Type`。
+
+成功响应示例：
+
+```json
+{"code":0,"content_type":"text/plain","body":"hello chunked echo"}
 ```
 
 ## Authentication
@@ -131,6 +145,97 @@ Authorization: Bearer <token>
 
 ## File APIs
 
+## Drive APIs
+
+Drive API 是新的网盘目录接口层，复用同一套 Bearer Token 鉴权。目录是数据库里的虚拟目录，真实文件仍统一写入 `webroot/uploads`。
+
+### `GET /api/drive/items?folder_id=0`
+
+返回当前目录下的文件夹和文件。`folder_id=0` 表示根目录。
+
+成功响应示例：
+
+```json
+{
+  "code": 0,
+  "folder_id": 0,
+  "folders": [
+    {"id": 3, "parent_id": 0, "name": "秋招材料", "created_at": "2026-05-09 10:00:00"}
+  ],
+  "files": [
+    {
+      "id": 12,
+      "folder_id": 0,
+      "filename": "resume.txt",
+      "content_type": "text/plain",
+      "size": 18,
+      "is_public": false,
+      "created_at": "2026-05-09 10:01:00",
+      "download_url": "/api/drive/files/12/download"
+    }
+  ]
+}
+```
+
+### `POST /api/drive/folders`
+
+创建虚拟目录。
+
+请求体：
+
+```json
+{"name":"秋招材料","parent_id":0}
+```
+
+成功响应：
+
+```json
+{"code":0,"message":"folder created","folder":{"id":3,"parent_id":0,"name":"秋招材料","created_at":"2026-05-09 10:00:00"}}
+```
+
+### `DELETE /api/drive/folders/:id`
+
+删除当前用户拥有的空文件夹。根目录 `0` 不能删除；如果目录下还有文件或子文件夹，会返回 `409 Conflict`。
+
+成功响应：
+
+```json
+{"code":0,"message":"folder deleted"}
+```
+
+### `POST /api/drive/files/upload`
+
+上传文件到指定虚拟目录，使用 `multipart/form-data`。
+
+表单字段：
+
+- `file`：二进制文件内容
+- `folder_id`：目标目录，根目录传 `0`
+- `filename`：可选，覆盖展示文件名
+- `is_public`：可选，`true/false`
+
+成功响应：
+
+```json
+{"code":0,"message":"upload success","file":{"id":12,"filename":"resume.txt","folder_id":3,"physical_id":5,"size":18,"is_public":false,"deduplicated":true,"sha256":"..."}}
+```
+
+如果服务端已存在相同 `SHA-256` 的物理文件，上传只新增 `files` 元数据并复用 `physical_files` 记录，响应中的 `deduplicated` 为 `true`。
+
+### `GET /api/drive/files/:id/download`
+
+下载当前用户拥有的文件。该接口复用文件归属校验，只允许下载自己的文件。
+
+### `DELETE /api/drive/files/:id`
+
+软删除当前用户拥有的文件，文件会从目录列表中消失并进入回收站。
+
+### Shell 测试
+
+```bash
+BASE_URL=http://127.0.0.1:9006 USER_NAME=drive_user PASSWORD=123456 ./scripts/test_drive.sh
+```
+
 ### `GET /api/private/files`
 
 返回当前用户的分页文件记录。
@@ -167,7 +272,7 @@ Authorization: Bearer <token>
 
 ### `POST /api/private/files`
 
-上传文件。当前主路径使用 `multipart/form-data`，请求体先流式落盘到临时文件，再提取文件 part 并写入最终存储目录。
+上传文件。当前主路径使用 `multipart/form-data`，同时支持 `Content-Length` 和 `Transfer-Encoding: chunked` 请求体；请求体先流式落盘到临时文件，再提取文件 part 并写入最终存储目录。
 
 表单字段：
 
@@ -255,6 +360,63 @@ Authorization: Bearer <token>
 ```json
 {"code":0,"message":"file is now private"}
 ```
+
+### `POST /api/private/files/:id/share`
+
+为当前用户拥有的文件创建独立分享链接。分享链接不依赖文件 `is_public` 状态，可选配置过期时间、提取码和下载次数限制。
+
+请求体：
+
+```json
+{
+  "access_code": "2468",
+  "expires_in_seconds": 3600,
+  "max_downloads": 3
+}
+```
+
+字段说明：
+
+- `access_code`：可选提取码，最多 32 字符；服务端只保存 `SHA-256` 摘要
+- `expires_in_seconds` / `expires_in`：可选，单位秒；`0` 或不传表示不过期
+- `max_downloads` / `download_limit`：可选；`0` 或不传表示不限次数
+
+成功响应：
+
+```json
+{
+  "code": 0,
+  "share": {
+    "token": "0123456789abcdef0123456789abcdef",
+    "file_id": 12,
+    "filename": "demo.txt",
+    "content_type": "text/plain",
+    "size": 11,
+    "sha256": "64ec88ca00b268e5ba1a35678a1b5316d212f4f36631ec0b0f4cfd92f6f2cf07",
+    "has_access_code": true,
+    "expires_at": "2026-05-09 12:00:00",
+    "max_downloads": 3,
+    "download_count": 0,
+    "share_url": "/share?token=0123456789abcdef0123456789abcdef",
+    "detail_url": "/api/share/0123456789abcdef0123456789abcdef",
+    "download_url": "/api/share/0123456789abcdef0123456789abcdef/download"
+  }
+}
+```
+
+### `GET /api/share/:token`
+
+查看分享文件元信息，无需登录。若分享设置了提取码，需要通过查询参数或请求体传 `code` / `access_code`。
+
+错误语义：
+
+- `403`：缺少提取码或提取码错误
+- `410`：分享链接已过期
+- `429`：分享下载次数已用尽
+
+### `GET /api/share/:token/download`
+
+下载分享文件，无需登录。若分享设置了提取码，需要传 `code` / `access_code`；下载成功后原子递增 `download_count`，达到 `max_downloads` 后返回 `429`。
 
 ## Public File APIs
 

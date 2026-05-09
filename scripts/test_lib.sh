@@ -38,6 +38,14 @@ extract_file_id() {
     echo "$1" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p'
 }
 
+extract_share_token() {
+    echo "$1" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p'
+}
+
+assert_json() {
+    python3 -c 'import json,sys; json.loads(sys.stdin.read())' >/dev/null
+}
+
 require_token() {
     login_response="$(login_user)"
     token="$(extract_token "$login_response")"

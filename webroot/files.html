@@ -1,0 +1,1130 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Atlas WebServer | 文件管理</title>
+        <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+        <link rel="stylesheet" href="/atlas.css">
+        <style>
+            .shell {
+                width: min(1180px, calc(100% - 32px));
+            }
+
+            .hero p {
+                max-width: 720px;
+            }
+
+            .grid {
+                grid-template-columns: 360px 1fr;
+            }
+
+            .panel {
+                border: 1px solid rgba(159, 77, 47, 0.15);
+                border-radius: 28px;
+                background: var(--panel-strong);
+                box-shadow: var(--shadow);
+                overflow: hidden;
+            }
+
+            .panel-head {
+                padding: 18px 20px 12px 20px;
+                border-bottom: 1px solid rgba(215, 198, 174, 0.7);
+            }
+
+            .panel-head h2 {
+                margin: 0;
+                font-size: 20px;
+            }
+
+            .panel-head p {
+                margin: 6px 0 0 0;
+                color: var(--muted);
+                font-size: 13px;
+                line-height: 1.5;
+            }
+
+            .panel-body {
+                padding: 18px 20px 22px 20px;
+            }
+
+            input,
+            textarea {
+                width: 100%;
+                border-radius: 16px;
+                border: 1px solid rgba(159, 77, 47, 0.16);
+                padding: 12px 14px;
+                font: inherit;
+            }
+
+            input,
+            textarea {
+                background: rgba(255, 255, 255, 0.78);
+                color: var(--text);
+            }
+
+            textarea {
+                min-height: 112px;
+                resize: vertical;
+            }
+
+            button.secondary {
+                background: linear-gradient(135deg, #2f6e59, #245644);
+            }
+
+            button.ghost {
+                background: rgba(255, 250, 242, 0.72);
+                color: var(--accent-strong);
+                border: 1px solid rgba(159, 77, 47, 0.18);
+                box-shadow: none;
+            }
+
+            .row {
+                display: flex;
+                gap: 10px;
+                flex-wrap: wrap;
+                min-width: 0;
+            }
+
+            .row > * {
+                flex: 1 1 140px;
+                min-width: 0;
+            }
+
+            .status {
+                margin-top: 12px;
+                padding: 12px 14px;
+                border-radius: 14px;
+                background: rgba(159, 77, 47, 0.08);
+                color: var(--muted);
+                min-height: 48px;
+                line-height: 1.5;
+                white-space: pre-wrap;
+            }
+
+            .status.ok {
+                background: rgba(30, 122, 82, 0.12);
+                color: var(--ok);
+            }
+
+            .status.error {
+                background: rgba(165, 87, 34, 0.12);
+                color: var(--warn);
+            }
+
+            .card-list {
+                display: grid;
+                gap: 12px;
+            }
+
+            .file-card,
+            .folder-card,
+            .log-card {
+                width: 100%;
+                min-width: 0;
+                border: 1px solid rgba(215, 198, 174, 0.9);
+                border-radius: 18px;
+                background: rgba(255, 255, 255, 0.65);
+                padding: 16px;
+            }
+
+            .file-top,
+            .log-top {
+                display: flex;
+                justify-content: space-between;
+                gap: 12px;
+                align-items: baseline;
+                min-width: 0;
+            }
+
+            .file-name,
+            .folder-name,
+            .log-action {
+                font-size: 18px;
+                font-weight: bold;
+                min-width: 0;
+                word-break: break-word;
+            }
+
+            .file-name {
+                flex: 1 1 auto;
+                max-width: 100%;
+                overflow-wrap: anywhere;
+            }
+
+            .folder-card {
+                background: linear-gradient(135deg, rgba(255, 250, 242, 0.9), rgba(245, 231, 211, 0.72));
+            }
+
+            .folder-name {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                flex: 1 1 auto;
+            }
+
+            .folder-name::before {
+                content: "📁";
+                font-size: 20px;
+            }
+
+            .breadcrumb {
+                display: flex;
+                flex-wrap: wrap;
+                align-items: center;
+                gap: 8px;
+                margin: 0 0 14px 0;
+                color: var(--muted);
+                font-size: 13px;
+            }
+
+            .breadcrumb button {
+                width: auto;
+                min-height: 0;
+                padding: 6px 10px;
+                border-radius: 999px;
+                font-size: 13px;
+            }
+
+            .folder-pill {
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+                padding: 8px 10px;
+                border-radius: 999px;
+                background: rgba(47, 110, 89, 0.1);
+                color: #245644;
+                font-size: 13px;
+                font-weight: 600;
+            }
+
+            .meta {
+                margin-top: 8px;
+                color: var(--muted);
+                font-size: 13px;
+                line-height: 1.6;
+                overflow-wrap: anywhere;
+                word-break: break-word;
+            }
+
+            .toolbar-actions {
+                display: flex;
+                flex-wrap: nowrap;
+                gap: 10px;
+                min-width: 0;
+            }
+
+            .toolbar-actions > * {
+                flex: 0 0 auto;
+            }
+
+            .empty {
+                padding: 30px 18px;
+                text-align: center;
+                color: var(--muted);
+                border: 1px dashed rgba(159, 77, 47, 0.2);
+                border-radius: 18px;
+                background: rgba(255, 255, 255, 0.45);
+            }
+
+            .token-box {
+                margin-top: 14px;
+                border-radius: 16px;
+                padding: 14px;
+                background: rgba(47, 36, 25, 0.06);
+                font-size: 18px;
+                font-weight: 600;
+                line-height: 1.5;
+                word-break: break-all;
+            }
+
+            .toolbar {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                gap: 12px;
+                margin-bottom: 16px;
+                flex-wrap: wrap;
+            }
+
+            .toolbar-title {
+                font-size: 22px;
+                margin: 0;
+            }
+
+            .section-copy {
+                margin-bottom: 14px;
+            }
+
+            .mini {
+                color: var(--muted);
+                font-size: 13px;
+                line-height: 1.5;
+            }
+
+            @media (max-width: 980px) {
+                .grid {
+                    grid-template-columns: 1fr;
+                }
+            }
+
+            @media (max-width: 720px) {
+                .panel-head,
+                .panel-body {
+                    padding-left: 16px;
+                    padding-right: 16px;
+                }
+
+                .toolbar {
+                    align-items: stretch;
+                }
+
+                .toolbar-actions {
+                    width: 100%;
+                    flex-wrap: nowrap;
+                    overflow-x: auto;
+                    overscroll-behavior-x: contain;
+                    padding-bottom: 6px;
+                    scroll-snap-type: x proximity;
+                    -webkit-overflow-scrolling: touch;
+                }
+
+                .toolbar-actions > * {
+                    flex: 0 0 auto;
+                    min-width: 136px;
+                    scroll-snap-align: start;
+                }
+
+                .file-top,
+                .log-top {
+                    flex-direction: column;
+                    align-items: flex-start;
+                }
+
+                .file-card .row {
+                    flex-wrap: nowrap;
+                    overflow-x: auto;
+                    width: 100%;
+                    max-width: 100%;
+                    overscroll-behavior-x: contain;
+                    padding-bottom: 6px;
+                    scroll-snap-type: x proximity;
+                    -webkit-overflow-scrolling: touch;
+                }
+
+                .file-card .row > * {
+                    flex: 0 0 auto;
+                    min-width: 132px;
+                    scroll-snap-align: start;
+                }
+
+                .log-card .row {
+                    flex-wrap: wrap;
+                }
+
+                .log-card .row > * {
+                    flex: 1 1 100%;
+                    min-width: 0;
+                }
+            }
+
+            @media (max-width: 520px) {
+                .shell {
+                    width: min(100% - 16px, 1180px);
+                }
+
+                .toolbar-title {
+                    font-size: 20px;
+                }
+
+                .file-card,
+                .log-card {
+                    padding: 14px;
+                }
+
+                .toolbar-actions > *,
+                .file-card .row > * {
+                    min-width: 124px;
+                }
+
+                .toolbar-actions::-webkit-scrollbar,
+                .file-card .row::-webkit-scrollbar {
+                    height: 6px;
+                }
+
+                .toolbar-actions::-webkit-scrollbar-thumb,
+                .file-card .row::-webkit-scrollbar-thumb {
+                    background: rgba(159, 77, 47, 0.28);
+                    border-radius: 999px;
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <div class="shell">
+            <section class="hero">
+                <p class="eyebrow">Atlas WebServer File Console</p>
+                <h1>轻量网盘管理台</h1>
+                <p>这里集中承载虚拟目录、文件上传下载、公开分享与操作记录，文件真实存储仍统一落在 webroot/uploads。</p>
+            </section>
+
+            <div class="grid">
+                <section class="panel">
+                    <div class="panel-head">
+                        <h2>目录与上传</h2>
+                        <p>当前页面会自动复用已登录账号，可创建虚拟目录并把文件上传到当前目录。</p>
+                    </div>
+                    <div class="panel-body">
+                        <div id="token-box" class="token-box">请先完成登录，再进入文件管理台。</div>
+
+                        <form id="upload-form" class="stack" style="margin-top: 18px;">
+                            <div>
+                                <label>当前目录</label>
+                                <div id="current-folder-pill" class="folder-pill">📁 根目录</div>
+                            </div>
+                            <div>
+                                <label for="upload-file">选择文件</label>
+                                <input id="upload-file" name="file" type="file" required>
+                                <div class="mini" style="margin-top: 6px;">页面上传前会先校验单文件上限和账号总容量；应用默认单文件 100 MiB、账号总容量 1 GiB。如果前面挂了 Nginx，还需要同步调大 `client_max_body_size`。</div>
+                            </div>
+                            <div>
+                                <label for="upload-name">展示文件名</label>
+                                <input id="upload-name" name="filename" type="text" placeholder="可留空，系统将默认使用原文件名">
+                            </div>
+                            <div>
+                                <label for="upload-public">可见范围</label>
+                                <div class="mini" style="margin-top: 6px;">公开文件面向所有访问者开放查看与下载，删除权限仍由文件所有者保留。</div>
+                                <div style="margin-top: 10px;">
+                                    <label style="display: flex; align-items: center; gap: 10px; margin: 0;">
+                                        <input id="upload-public" name="is_public" type="checkbox" style="width: auto; min-height: auto;">
+                                        <span>上传为公开文件</span>
+                                    </label>
+                                </div>
+                            </div>
+                            <button type="submit" class="secondary">上传文件</button>
+                        </form>
+
+                        <form id="folder-form" class="stack" style="margin-top: 18px;">
+                            <div>
+                                <label for="folder-name">新建文件夹</label>
+                                <input id="folder-name" name="name" type="text" placeholder="例如：秋招材料、项目截图、简历附件">
+                            </div>
+                            <button type="submit" class="ghost">在当前目录创建文件夹</button>
+                        </form>
+
+                        <div id="status-box" class="status">等待处理。</div>
+                    </div>
+                </section>
+
+                <section class="panel">
+                    <div class="panel-head">
+                        <h2>网盘、公开分享与操作日志</h2>
+                        <p>这里整合当前账号网盘目录、公开文件浏览与操作记录，减少来回跳转。</p>
+                    </div>
+                    <div class="panel-body">
+                        <div class="toolbar section-copy">
+                            <div>
+                                <h3 class="toolbar-title">我的网盘</h3>
+                                <div class="mini">一个接口返回当前目录下的文件夹和文件，可进入目录、下载或删除文件。</div>
+                            </div>
+                            <div class="toolbar-actions">
+                                <button type="button" id="back-folder-btn" class="ghost">返回上级</button>
+                                <button type="button" id="refresh-files-btn" class="ghost">刷新网盘</button>
+                                <button type="button" id="refresh-logs-btn" class="ghost">刷新日志</button>
+                            </div>
+                        </div>
+
+                        <div id="breadcrumb" class="breadcrumb">当前位置：根目录</div>
+
+                        <div id="files-list" class="card-list">
+                            <div class="empty">登录后可以查看网盘目录。</div>
+                        </div>
+
+                        <div class="toolbar" style="margin-top: 24px;">
+                            <div>
+                                <h3 class="toolbar-title">公开文件列表</h3>
+                                <div class="mini">这里展示当前所有公开文件，可直接下载，或复制单文件分享链接。</div>
+                            </div>
+                            <div class="toolbar-actions">
+                                <button type="button" id="refresh-public-files-btn" class="ghost">刷新公开列表</button>
+                            </div>
+                        </div>
+
+                        <div id="public-files-list" class="card-list">
+                            <div class="empty">正在读取公开文件列表。</div>
+                        </div>
+
+                        <div class="toolbar" style="margin-top: 24px;">
+                            <div>
+                                <h3 class="toolbar-title">操作日志</h3>
+                                <div class="mini">这里记录登录、上传、下载、删除等关键操作，便于查看最近处理轨迹。</div>
+                            </div>
+                        </div>
+
+                        <div id="logs-list" class="card-list">
+                            <div class="empty">登录后可以查看操作日志。</div>
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </div>
+
+        <script>
+            (function () {
+                const state = {
+                    token: sessionStorage.getItem("tws_demo_token") || "",
+                    username: sessionStorage.getItem("tws_demo_user") || "",
+                    currentFolderId: 0,
+                    folderStack: [{ id: 0, name: "根目录" }]
+                };
+
+                const uploadForm = document.getElementById("upload-form");
+                const folderForm = document.getElementById("folder-form");
+                const refreshFilesBtn = document.getElementById("refresh-files-btn");
+                const backFolderBtn = document.getElementById("back-folder-btn");
+                const refreshPublicFilesBtn = document.getElementById("refresh-public-files-btn");
+                const refreshLogsBtn = document.getElementById("refresh-logs-btn");
+                const tokenBox = document.getElementById("token-box");
+                const statusBox = document.getElementById("status-box");
+                const filesList = document.getElementById("files-list");
+                const breadcrumb = document.getElementById("breadcrumb");
+                const currentFolderPill = document.getElementById("current-folder-pill");
+                const publicFilesList = document.getElementById("public-files-list");
+                const logsList = document.getElementById("logs-list");
+                const uploadFileInput = document.getElementById("upload-file");
+                const uploadNameInput = document.getElementById("upload-name");
+                const uploadPublicInput = document.getElementById("upload-public");
+                const folderNameInput = document.getElementById("folder-name");
+
+                function updateTokenBox() {
+                    if (!state.token) {
+                        tokenBox.textContent = "当前未检测到有效登录信息，请先完成登录后再进入文件管理台。";
+                        return;
+                    }
+                    tokenBox.textContent = "当前用户: " + (state.username || "unknown");
+                }
+
+                function currentFolderName() {
+                    const current = state.folderStack[state.folderStack.length - 1];
+                    return current ? current.name : "根目录";
+                }
+
+                function updateFolderChrome() {
+                    currentFolderPill.textContent = "📁 " + currentFolderName() + " (#" + state.currentFolderId + ")";
+                    breadcrumb.innerHTML = "当前位置：" + state.folderStack.map(function (folder, index) {
+                        return '<button type="button" class="ghost" data-breadcrumb-index="' + index + '">' + escapeHtml(folder.name) + '</button>';
+                    }).join(" / ");
+                    backFolderBtn.disabled = state.folderStack.length <= 1;
+                }
+
+                function setStatus(message, type) {
+                    statusBox.textContent = message;
+                    statusBox.className = "status" + (type ? " " + type : "");
+                }
+
+                function authHeaders() {
+                    return state.token ? { Authorization: "Bearer " + state.token } : {};
+                }
+
+                function formatBytes(bytes) {
+                    const value = Number(bytes) || 0;
+                    if (value <= 0) {
+                        return "0 MB";
+                    }
+                    const mb = value / (1024 * 1024);
+                    if (mb < 0.01) {
+                        return "< 0.01 MB";
+                    }
+                    return mb.toFixed(2) + " MB";
+                }
+
+                function quotaMessage(preflight) {
+                    return "已用 " + formatBytes(preflight.used_bytes) + " / 总容量 " + formatBytes(preflight.max_total_bytes) +
+                        "，剩余 " + formatBytes(preflight.remaining_bytes) + "，单文件上限 " + formatBytes(preflight.max_single_file_bytes) + "。";
+                }
+
+                function buildProxyLimitMessage(response, text) {
+                    const plainText = String(text || "").replace(/\s+/g, " ").trim();
+                    const viaNginx = /nginx/i.test(plainText);
+                    const baseMessage = response.status === 413
+                        ? "上传体积超出当前入口限制（HTTP 413）。应用默认允许 100 MiB，但如果前面使用了 Nginx，还需要把 client_max_body_size 调大到不小于应用上传上限。"
+                        : "请求在到达应用前就被前置代理拦截了。";
+                    return viaNginx ? baseMessage + " 当前返回页来自 Nginx。" : baseMessage;
+                }
+
+                async function requestJson(url, options) {
+                    const response = await fetch(url, options || {});
+                    const text = await response.text();
+                    const contentType = (response.headers.get("Content-Type") || "").toLowerCase();
+                    let data = {};
+
+                    if (!contentType.includes("application/json")) {
+                        if (!response.ok && response.status === 413) {
+                            const proxyError = new Error(buildProxyLimitMessage(response, text));
+                            proxyError.status = response.status;
+                            proxyError.responseText = text;
+                            throw proxyError;
+                        }
+                        if (!response.ok && /<html/i.test(text)) {
+                            const htmlError = new Error("服务返回了 HTML 错误页（HTTP " + response.status + "），请求可能被前置代理拦截。");
+                            htmlError.status = response.status;
+                            htmlError.responseText = text;
+                            throw htmlError;
+                        }
+                    }
+
+                    try {
+                        data = text ? JSON.parse(text) : {};
+                    } catch (error) {
+                        const parseError = new Error("服务返回了非 JSON 响应: " + text);
+                        parseError.status = response.status;
+                        parseError.responseText = text;
+                        throw parseError;
+                    }
+                    if (!response.ok) {
+                        const requestError = new Error(data.message || ("HTTP " + response.status));
+                        requestError.status = response.status;
+                        requestError.responseText = text;
+                        throw requestError;
+                    }
+                    return data;
+                }
+
+                function abbreviateHash(hash) {
+                    const value = String(hash || "").trim();
+                    if (!value) {
+                        return "-";
+                    }
+                    if (value.length <= 20) {
+                        return value;
+                    }
+                    return value.slice(0, 12) + "..." + value.slice(-8);
+                }
+
+                function renderFiles(files, folders) {
+                    updateFolderChrome();
+                    const folderList = folders || [];
+                    const fileList = files || [];
+                    if (!folderList.length && !fileList.length) {
+                        filesList.innerHTML = '<div class="empty">当前目录为空。可以上传文件或创建文件夹。</div>';
+                        return;
+                    }
+
+                    const folderCards = folderList.map(function (folder) {
+                        return (
+                            '<div class="folder-card">' +
+                                '<div class="file-top">' +
+                                    '<div class="folder-name">' + escapeHtml(folder.name) + '</div>' +
+                                    '<div class="mini">#' + folder.id + '</div>' +
+                                '</div>' +
+                                '<div class="meta">虚拟目录<br>创建时间: ' + escapeHtml(folder.created_at || '-') + '</div>' +
+                                '<div class="row" style="margin-top: 14px;">' +
+                                    '<button type="button" class="ghost" data-open-folder="' + folder.id + '" data-folder-name="' + escapeHtml(folder.name) + '">进入文件夹</button>' +
+                                    '<button type="button" class="ghost" data-delete-folder="' + folder.id + '" data-folder-name="' + escapeHtml(folder.name) + '">删除空文件夹</button>' +
+                                '</div>' +
+                            '</div>'
+                        );
+                    }).join("");
+
+                    const fileCards = fileList.map(function (file) {
+                        return (
+                            '<div class="file-card">' +
+                                '<div class="file-top">' +
+                                    '<div class="file-name">' + escapeHtml(file.filename) + '</div>' +
+                                    '<div class="mini">#' + file.id + '</div>' +
+                                '</div>' +
+                                '<div class="meta">目录: #' + (file.folder_id || state.currentFolderId) + '<br>类型: ' + escapeHtml(file.content_type) + '<br>大小: ' + formatBytes(file.size) + '<br>创建时间: ' + escapeHtml(file.created_at) + '<br>可见范围: ' + (file.is_public ? '公开' : '仅自己可见') + '</div>' +
+                                '<div class="row" style="margin-top: 14px;">' +
+                                    '<button type="button" class="ghost" data-download="' + file.id + '">下载</button>' +
+                                    '<button type="button" class="ghost" data-share="' + file.id + '">复制分享链接</button>' +
+                                    '<button type="button" class="ghost" data-visibility="' + file.id + '" data-public="' + (file.is_public ? '1' : '0') + '">' + (file.is_public ? '设为私有' : '设为公开') + '</button>' +
+                                    '<button type="button" class="ghost" data-delete="' + file.id + '">删除</button>' +
+                                '</div>' +
+                            '</div>'
+                        );
+                    }).join("");
+
+                    filesList.innerHTML = folderCards + fileCards;
+                }
+
+                function renderPublicFiles(files) {
+                    if (!files || !files.length) {
+                        publicFilesList.innerHTML = '<div class="empty">当前暂无公开文件。</div>';
+                        return;
+                    }
+                    publicFilesList.innerHTML = files.map(function (file) {
+                        const shareHref = "/share?id=" + encodeURIComponent(String(file.id));
+                        return (
+                            '<div class="file-card">' +
+                                '<div class="file-top">' +
+                                    '<div class="file-name">' + escapeHtml(file.filename) + '</div>' +
+                                    '<div class="mini">#' + file.id + '</div>' +
+                                '</div>' +
+                                '<div class="meta">上传者: ' + escapeHtml(file.owner) + '<br>类型: ' + escapeHtml(file.content_type) + '<br>大小: ' + formatBytes(file.size) + '<br>创建时间: ' + escapeHtml(file.created_at) + '</div>' +
+                                '<div class="row" style="margin-top: 14px;">' +
+                                    '<button type="button" class="ghost" data-public-download="' + file.id + '">下载</button>' +
+                                    '<button type="button" class="ghost" data-share="' + file.id + '">复制分享链接</button>' +
+                                    '<a class="link-button secondary" href="' + shareHref + '">查看分享页</a>' +
+                                '</div>' +
+                            '</div>'
+                        );
+                    }).join("");
+                }
+
+                function buildShareLink(fileId) {
+                    return window.location.origin + "/share?id=" + encodeURIComponent(String(fileId));
+                }
+
+                async function copyText(text) {
+                    if (navigator.clipboard && navigator.clipboard.writeText) {
+                        await navigator.clipboard.writeText(text);
+                        return text;
+                    }
+
+                    const input = document.createElement("input");
+                    input.value = text;
+                    document.body.appendChild(input);
+                    input.select();
+                    document.execCommand("copy");
+                    input.remove();
+                    return text;
+                }
+
+                async function copyShareLink(fileId) {
+                    let shareLink = buildShareLink(fileId);
+                    if (state.token) {
+                        try {
+                            const data = await requestJson("/api/private/files/" + encodeURIComponent(String(fileId)) + "/share", {
+                                method: "POST",
+                                headers: Object.assign({ "Content-Type": "application/json" }, authHeaders()),
+                                body: JSON.stringify({})
+                            });
+                            if (data.share && data.share.share_url) {
+                                shareLink = window.location.origin + data.share.share_url;
+                            }
+                        } catch (error) {
+                            // Public files owned by others still fall back to the legacy public share URL.
+                        }
+                    }
+                    return copyText(shareLink);
+                }
+
+                async function downloadBlob(url, fallbackName, headers) {
+                    const response = await fetch(url, headers ? { headers: headers } : undefined);
+                    if (!response.ok) {
+                        const text = await response.text();
+                        throw new Error(text || ("HTTP " + response.status));
+                    }
+
+                    const blob = await response.blob();
+                    const objectUrl = URL.createObjectURL(blob);
+                    const link = document.createElement("a");
+                    const disposition = response.headers.get("Content-Disposition") || "";
+                    const match = disposition.match(/filename="([^"]+)"/);
+                    link.href = objectUrl;
+                    link.download = match ? match[1] : fallbackName;
+                    document.body.appendChild(link);
+                    link.click();
+                    link.remove();
+                    URL.revokeObjectURL(objectUrl);
+                }
+
+                function renderLogs(logs) {
+                    if (!logs || !logs.length) {
+                        logsList.innerHTML = '<div class="empty">当前暂无操作记录。</div>';
+                        return;
+                    }
+                    logsList.innerHTML = logs.map(function (item) {
+                        return (
+                            '<div class="log-card">' +
+                                '<div class="log-top">' +
+                                    '<div class="log-action">' + escapeHtml(item.action) + '</div>' +
+                                    '<div class="mini">' + escapeHtml(item.created_at) + '</div>' +
+                                '</div>' +
+                                '<div class="meta">资源类型: ' + escapeHtml(item.resource_type) + ' / 资源 ID: ' + item.resource_id + '<br>详情: ' + escapeHtml(item.detail) + '</div>' +
+                                '<div class="row" style="margin-top: 14px;">' +
+                                    '<button type="button" class="ghost" data-log-delete="' + item.id + '">删除日志</button>' +
+                                '</div>' +
+                            '</div>'
+                        );
+                    }).join("");
+                }
+
+                function escapeHtml(value) {
+                    return String(value || "")
+                        .replace(/&/g, "&amp;")
+                        .replace(/</g, "&lt;")
+                        .replace(/>/g, "&gt;")
+                        .replace(/"/g, "&quot;")
+                        .replace(/'/g, "&#39;");
+                }
+
+                async function refreshFiles() {
+                    if (!state.token) {
+                        renderFiles([], []);
+                        return;
+                    }
+                    const data = await requestJson("/api/drive/items?folder_id=" + encodeURIComponent(String(state.currentFolderId)), {
+                        headers: authHeaders()
+                    });
+                    renderFiles(data.files || [], data.folders || []);
+                }
+
+                async function refreshPublicFiles() {
+                    const data = await requestJson("/api/files/public");
+                    renderPublicFiles(data.files || []);
+                }
+
+                async function refreshLogs() {
+                    if (!state.token) {
+                        renderLogs([]);
+                        return;
+                    }
+                    const data = await requestJson("/api/private/operations", {
+                        headers: authHeaders()
+                    });
+                    renderLogs(data.operations || []);
+                }
+
+                async function refreshAll() {
+                    await Promise.all([refreshFiles(), refreshPublicFiles(), refreshLogs()]);
+                }
+
+                uploadForm.addEventListener("submit", async function (event) {
+                    event.preventDefault();
+                    if (!state.token) {
+                        setStatus("请先登录后再进入文件管理台。", "error");
+                        return;
+                    }
+                    if (!uploadFileInput.files.length) {
+                        setStatus("请选择一个文件。", "error");
+                        return;
+                    }
+
+                    const file = uploadFileInput.files[0];
+                    const fileName = uploadNameInput.value.trim() || file.name;
+
+                    setStatus("正在校验上传配额...", "");
+                    try {
+                        const preflight = await requestJson("/api/drive/files/preflight", {
+                            method: "POST",
+                            headers: Object.assign({ "Content-Type": "application/json" }, authHeaders()),
+                            body: JSON.stringify({ size: file.size, filename: fileName, folder_id: state.currentFolderId })
+                        });
+                        if (!preflight.allowed) {
+                            setStatus("上传未开始: " + (preflight.reason || "配额不足") + "。" + quotaMessage(preflight), "error");
+                            return;
+                        }
+
+                        setStatus("文件上传中... " + quotaMessage(preflight), "");
+                        const formData = new FormData();
+                        formData.append("file", file, file.name);
+                        formData.append("filename", fileName);
+                        formData.append("folder_id", String(state.currentFolderId));
+                        formData.append("is_public", uploadPublicInput.checked ? "true" : "false");
+                        const data = await requestJson("/api/drive/files/upload", {
+                            method: "POST",
+                            headers: authHeaders(),
+                            body: formData
+                        });
+                        uploadForm.reset();
+                        setStatus("文件已上传到「" + currentFolderName() + "」，文件 ID: " + data.file.id + (data.file.deduplicated ? "，命中 SHA-256 秒传" : "") + "，SHA-256: " + abbreviateHash(data.file.sha256), "ok");
+                        await refreshAll();
+                    } catch (error) {
+                        if (error && error.status === 413) {
+                            setStatus("上传未完成: " + error.message + " 当前文件大小为 " + formatBytes(file.size) + "。", "error");
+                            return;
+                        }
+                        setStatus("上传未完成: " + error.message, "error");
+                    }
+                });
+
+                folderForm.addEventListener("submit", async function (event) {
+                    event.preventDefault();
+                    if (!state.token) {
+                        setStatus("请先登录后再创建文件夹。", "error");
+                        return;
+                    }
+
+                    const folderName = folderNameInput.value.trim();
+                    if (!folderName) {
+                        setStatus("请输入文件夹名称。", "error");
+                        return;
+                    }
+
+                    try {
+                        const data = await requestJson("/api/drive/folders", {
+                            method: "POST",
+                            headers: Object.assign({ "Content-Type": "application/json" }, authHeaders()),
+                            body: JSON.stringify({ name: folderName, parent_id: state.currentFolderId })
+                        });
+                        folderForm.reset();
+                        setStatus("文件夹已创建: " + data.folder.name, "ok");
+                        await Promise.all([refreshFiles(), refreshLogs()]);
+                    } catch (error) {
+                        setStatus("文件夹创建未完成: " + error.message, "error");
+                    }
+                });
+
+                filesList.addEventListener("click", async function (event) {
+                    const openFolderId = event.target.getAttribute("data-open-folder");
+                    const openFolderName = event.target.getAttribute("data-folder-name");
+                    const deleteFolderId = event.target.getAttribute("data-delete-folder");
+                    const downloadId = event.target.getAttribute("data-download");
+                    const shareId = event.target.getAttribute("data-share");
+                    const deleteId = event.target.getAttribute("data-delete");
+                    const visibilityId = event.target.getAttribute("data-visibility");
+
+                    if (openFolderId) {
+                        state.currentFolderId = Number(openFolderId) || 0;
+                        state.folderStack.push({ id: state.currentFolderId, name: openFolderName || ("文件夹 #" + openFolderId) });
+                        setStatus("正在打开文件夹: " + currentFolderName(), "");
+                        try {
+                            await refreshFiles();
+                            setStatus("已进入文件夹: " + currentFolderName(), "ok");
+                        } catch (error) {
+                            state.folderStack.pop();
+                            const fallback = state.folderStack[state.folderStack.length - 1] || { id: 0, name: "根目录" };
+                            state.currentFolderId = fallback.id;
+                            updateFolderChrome();
+                            setStatus("文件夹打开未完成: " + error.message, "error");
+                        }
+                        return;
+                    }
+
+                    if (deleteFolderId) {
+                        const folderName = event.target.getAttribute("data-folder-name") || ("文件夹 #" + deleteFolderId);
+                        if (!window.confirm("确认删除空文件夹「" + folderName + "」吗？非空目录不会被删除。")) {
+                            return;
+                        }
+                        try {
+                            await requestJson("/api/drive/folders/" + deleteFolderId, {
+                                method: "DELETE",
+                                headers: authHeaders()
+                            });
+                            setStatus("文件夹已删除: " + folderName, "ok");
+                            await Promise.all([refreshFiles(), refreshLogs()]);
+                        } catch (error) {
+                            setStatus("文件夹删除未完成: " + error.message, "error");
+                        }
+                        return;
+                    }
+
+                    if (shareId) {
+                        try {
+                            const shareLink = await copyShareLink(shareId);
+                            setStatus("分享链接已复制: " + shareLink, "ok");
+                        } catch (error) {
+                            setStatus("分享链接复制未完成，请稍后重试。", "error");
+                        }
+                        return;
+                    }
+
+                    if (downloadId) {
+                        if (!state.token) {
+                            setStatus("请先登录后再进入文件管理台。", "error");
+                            return;
+                        }
+                        try {
+                            await downloadBlob("/api/drive/files/" + downloadId + "/download", "file-" + downloadId, authHeaders());
+                            setStatus("下载任务已开始。", "ok");
+                            refreshLogs().catch(function () {});
+                        } catch (error) {
+                            setStatus("下载未完成: " + error.message, "error");
+                        }
+                        return;
+                    }
+
+                    if (visibilityId) {
+                        const nextPublic = event.target.getAttribute("data-public") !== "1";
+                        try {
+                            await requestJson("/api/private/files/" + visibilityId + "/visibility", {
+                                method: "POST",
+                                headers: Object.assign({ "Content-Type": "application/json" }, authHeaders()),
+                                body: JSON.stringify({ is_public: nextPublic })
+                            });
+                            setStatus(nextPublic ? "文件已设为公开。" : "文件已设为私有。", "ok");
+                            await refreshAll();
+                        } catch (error) {
+                            setStatus("可见范围更新未完成: " + error.message, "error");
+                        }
+                        return;
+                    }
+
+                    if (deleteId) {
+                        if (!state.token) {
+                            setStatus("请先登录后再进入文件管理台。", "error");
+                            return;
+                        }
+                        if (!window.confirm("确认删除文件 #" + deleteId + " 吗？")) {
+                            return;
+                        }
+                        try {
+                            await requestJson("/api/drive/files/" + deleteId, {
+                                method: "DELETE",
+                                headers: authHeaders()
+                            });
+                            setStatus("文件已删除。", "ok");
+                            await refreshAll();
+                        } catch (error) {
+                            setStatus("文件删除未完成: " + error.message, "error");
+                        }
+                    }
+                });
+
+                publicFilesList.addEventListener("click", async function (event) {
+                    const publicDownloadId = event.target.getAttribute("data-public-download");
+                    const shareId = event.target.getAttribute("data-share");
+
+                    if (shareId) {
+                        try {
+                            const shareLink = await copyShareLink(shareId);
+                            setStatus("分享链接已复制: " + shareLink, "ok");
+                        } catch (error) {
+                            setStatus("分享链接复制未完成，请稍后重试。", "error");
+                        }
+                        return;
+                    }
+
+                    if (!publicDownloadId) {
+                        return;
+                    }
+
+                    try {
+                        await downloadBlob("/api/files/public/" + publicDownloadId + "/download", "public-file-" + publicDownloadId);
+                        setStatus("公开文件下载任务已开始。", "ok");
+                    } catch (error) {
+                        setStatus("公开文件下载未完成: " + error.message, "error");
+                    }
+                });
+
+                logsList.addEventListener("click", async function (event) {
+                    const deleteLogId = event.target.getAttribute("data-log-delete");
+                    if (!deleteLogId) {
+                        return;
+                    }
+                    if (!state.token) {
+                        setStatus("请先登录后再进入文件管理台。", "error");
+                        return;
+                    }
+                    if (!window.confirm("确认删除日志 #" + deleteLogId + " 吗？")) {
+                        return;
+                    }
+                    try {
+                        await requestJson("/api/private/operations/" + deleteLogId, {
+                            method: "DELETE",
+                            headers: authHeaders()
+                        });
+                        setStatus("日志已删除。", "ok");
+                        await refreshLogs();
+                    } catch (error) {
+                        setStatus("日志删除未完成: " + error.message, "error");
+                    }
+                });
+
+                refreshFilesBtn.addEventListener("click", function () {
+                    refreshFiles()
+                        .then(function () {
+                            setStatus("网盘目录已刷新。", "ok");
+                        })
+                        .catch(function (error) {
+                            setStatus("网盘目录刷新未完成: " + error.message, "error");
+                        });
+                });
+
+                backFolderBtn.addEventListener("click", function () {
+                    if (state.folderStack.length <= 1) {
+                        setStatus("已经在根目录。", "ok");
+                        return;
+                    }
+                    state.folderStack.pop();
+                    const current = state.folderStack[state.folderStack.length - 1] || { id: 0, name: "根目录" };
+                    state.currentFolderId = current.id;
+                    refreshFiles()
+                        .then(function () {
+                            setStatus("已返回: " + currentFolderName(), "ok");
+                        })
+                        .catch(function (error) {
+                            setStatus("返回上级未完成: " + error.message, "error");
+                        });
+                });
+
+                breadcrumb.addEventListener("click", function (event) {
+                    const indexValue = event.target.getAttribute("data-breadcrumb-index");
+                    if (indexValue === null) {
+                        return;
+                    }
+                    const index = Number(indexValue);
+                    if (!Number.isFinite(index) || index < 0 || index >= state.folderStack.length) {
+                        return;
+                    }
+                    state.folderStack = state.folderStack.slice(0, index + 1);
+                    state.currentFolderId = state.folderStack[state.folderStack.length - 1].id;
+                    refreshFiles()
+                        .then(function () {
+                            setStatus("已切换到: " + currentFolderName(), "ok");
+                        })
+                        .catch(function (error) {
+                            setStatus("目录切换未完成: " + error.message, "error");
+                        });
+                });
+
+                refreshPublicFilesBtn.addEventListener("click", function () {
+                    refreshPublicFiles()
+                        .then(function () {
+                            setStatus("公开文件列表已更新。", "ok");
+                        })
+                        .catch(function (error) {
+                            setStatus("公开文件列表刷新未完成: " + error.message, "error");
+                        });
+                });
+
+                refreshLogsBtn.addEventListener("click", function () {
+                    refreshLogs()
+                        .then(function () {
+                            setStatus("操作记录已更新。", "ok");
+                        })
+                        .catch(function (error) {
+                            setStatus("操作记录刷新未完成: " + error.message, "error");
+                        });
+                });
+
+                async function initializePage() {
+                    let publicError = null;
+
+                    updateTokenBox();
+                    updateFolderChrome();
+                    try {
+                        await refreshPublicFiles();
+                    } catch (error) {
+                        publicError = error;
+                        renderPublicFiles([]);
+                    }
+
+                    if (!state.token) {
+                        renderFiles([], []);
+                        renderLogs([]);
+                        setStatus(publicError ? ("请先登录后再进入文件管理台。公开文件列表刷新未完成: " + publicError.message) : "请先登录后再进入文件管理台。公开文件列表仍可直接使用。", "error");
+                        return;
+                    }
+
+                    try {
+                        await Promise.all([refreshFiles(), refreshLogs()]);
+                        setStatus(publicError ? ("已恢复当前登录状态，但公开文件列表刷新未完成: " + publicError.message) : "已恢复当前登录状态。", publicError ? "error" : "ok");
+                    } catch (error) {
+                        renderFiles([], []);
+                        renderLogs([]);
+                        setStatus("当前登录状态已过期，请返回登录页完成登录。", "error");
+                    }
+                }
+
+                initializePage().catch(function (error) {
+                    renderFiles([], []);
+                    renderPublicFiles([]);
+                    renderLogs([]);
+                    setStatus("页面初始化未完成: " + error.message, "error");
+                });
+            })();
+        </script>
+    </body>
+</html>

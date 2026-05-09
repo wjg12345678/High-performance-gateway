@@ -8,13 +8,44 @@ ifeq ($(DEBUG), 1)
     CXXFLAGS += -g
 else
     CXXFLAGS += -O2
-
 endif
 
-server: main.cpp ./timer/lst_timer.cpp ./timer/heap_timer.cpp ./http/core/connection.cpp ./http/core/router.cpp ./http/files/file_helpers.cpp ./http/files/file_store.cpp ./http/files/file_service.cpp ./http/api/operation_service.cpp ./http/api/auth_state.cpp ./http/api/auth_session.cpp ./http/api/auth.cpp ./http/core/utils.cpp ./http/core/response.cpp ./http/core/io.cpp ./http/core/parser.cpp ./http/core/runtime.cpp ./log/log.cpp ./CGImysql/sql_connection_pool.cpp webserver.cpp webserver_sub_reactor.cpp config.cpp
+SERVER_SRCS := \
+    app/main.cpp \
+    app/webserver.cpp \
+    app/webserver_sub_reactor.cpp \
+    app/config.cpp \
+    infra/timer/lst_timer.cpp \
+    infra/timer/heap_timer.cpp \
+    infra/log/log.cpp \
+    infra/db/sql_connection_pool.cpp \
+    infra/storage/storage.cpp \
+    http/core/connection.cpp \
+    http/router/router.cpp \
+    http/files/file_helpers.cpp \
+    http/files/file_store.cpp \
+    http/files/multipart_parser.cpp \
+    http/files/file_service.cpp \
+    http/api/operation_service.cpp \
+    http/api/auth_session.cpp \
+    http/api/auth.cpp \
+    http/core/utils.cpp \
+    http/core/response.cpp \
+    http/core/io.cpp \
+    http/core/parser.cpp \
+    http/core/runtime.cpp \
+    service/files/file_service.cpp \
+    service/auth/auth_service.cpp \
+    repo/mysql/mysql_utils.cpp \
+    repo/mysql/user_repository.cpp \
+    repo/mysql/session_repository.cpp \
+    repo/mysql/operation_repository.cpp \
+    repo/mysql/file_repository.cpp
+
+server: $(SERVER_SRCS)
 	$(CXX) -o $@ $^ $(CXXFLAGS) $(LDFLAGS) $(LDLIBS)
 
-server-sanitize: main.cpp ./timer/lst_timer.cpp ./timer/heap_timer.cpp ./http/core/connection.cpp ./http/core/router.cpp ./http/files/file_helpers.cpp ./http/files/file_store.cpp ./http/files/file_service.cpp ./http/api/operation_service.cpp ./http/api/auth_state.cpp ./http/api/auth_session.cpp ./http/api/auth.cpp ./http/core/utils.cpp ./http/core/response.cpp ./http/core/io.cpp ./http/core/parser.cpp ./http/core/runtime.cpp ./log/log.cpp ./CGImysql/sql_connection_pool.cpp webserver.cpp webserver_sub_reactor.cpp config.cpp
+server-sanitize: $(SERVER_SRCS)
 	$(CXX) -o $@ $^ $(CXXFLAGS) $(SANITIZER_FLAGS) $(LDFLAGS) $(SANITIZER_FLAGS) $(LDLIBS)
 
 parser-chunked-test: tests/parser_chunked_test.cpp http/core/parser.cpp http/core/connection.h

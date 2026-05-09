@@ -6,6 +6,7 @@
 
 void modfd(int epollfd, int fd, int ev, int TRIGMode);
 
+
 void HttpConnection::reset_request_parser_state()
 {
     reset_ring_buffer(m_read_ring, m_read_ring_buf.data(), (int)m_read_ring_buf.size());

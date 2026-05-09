@@ -26,5 +26,7 @@ docker/mysql/*.sql.tmp
 TinyWebServer.pid
 
 reports/
-root/uploads/*
-!root/uploads/.gitkeep
+webroot/uploads/*
+!webroot/uploads/.gitkeep
+
+*ServerLog

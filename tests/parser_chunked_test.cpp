@@ -11,7 +11,7 @@
 
 #include "../http/core/ring_buffer.h"
 #include "../http/files/file_types.h"
-#include "../lock/locker.h"
+#include "../infra/lock/locker.h"
 
 #define private public
 #include "../http/core/connection.h"

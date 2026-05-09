@@ -1,5 +1,5 @@
 #include "connection.h"
-#include "../api/auth_state.h"
+#include "../../service/auth/auth_service.h"
 
 #include <mysql/mysql.h>
 #include <cerrno>
@@ -11,14 +11,15 @@
 #include <openssl/rand.h>
 #include <unistd.h>
 
-#include "../../CGImysql/sql_connection_pool.h"
-#include "../../log/log.h"
+#include "../../infra/db/sql_connection_pool.h"
+#include "../../infra/log/log.h"
 
 SSL_CTX *HttpConnection::m_ssl_ctx = nullptr;
 bool HttpConnection::m_tls_enabled = false;
 bool HttpConnection::m_legacy_compat_enabled = false;
 size_t HttpConnection::m_upload_max_bytes = 100 * 1024 * 1024;
 size_t HttpConnection::m_upload_request_overhead_bytes = 512 * 1024;
+size_t HttpConnection::m_user_storage_quota_bytes = 1024L * 1024L * 1024L;
 
 namespace
 {
@@ -51,29 +52,11 @@ void HttpConnection::initmysql_result(connection_pool *connPool)
     MYSQL *mysql = nullptr;
     connectionRAII mysqlcon(&mysql, connPool);
 
-    //在user表中检索username，passwd数据，预加载到内存map
-    if (mysql_query(mysql, "SELECT username,passwd FROM user"))
+    //在 user 表中检索 username/passwd，预加载到内存 map。
+    if (!service_auth::load_user_cache(mysql))
     {
-        LOG_ERROR("SELECT error:%s\n", mysql_error(mysql));
+        LOG_ERROR("SELECT user cache error:%s\n", mysql_error(mysql));
     }
-
-    //从表中检索完整的结果集
-    MYSQL_RES *result = mysql_store_result(mysql);
-
-    //返回结果集中的列数
-    int num_fields = mysql_num_fields(result);
-
-    //返回所有字段结构的数组
-    MYSQL_FIELD *fields = mysql_fetch_fields(result);
-
-    //从结果集中获取下一行，将对应的用户名和密码，存入map中
-    while (MYSQL_ROW row = mysql_fetch_row(result))
-    {
-        string temp1(row[0]);
-        string temp2(row[1]);
-        auth_user_cache()[temp1] = temp2;
-    }
-    mysql_free_result(result);
 }
 
 //对文件描述符设置非阻塞
@@ -131,13 +114,14 @@ void HttpConnection::configure_tls(SSL_CTX *ssl_ctx, bool https_enabled)
     m_tls_enabled = https_enabled && ssl_ctx != nullptr;
 }
 
-void HttpConnection::configure_uploads(size_t upload_max_bytes)
+void HttpConnection::configure_uploads(size_t upload_max_bytes, size_t user_storage_quota_bytes)
 {
     if (upload_max_bytes == 0)
     {
         upload_max_bytes = 100 * 1024 * 1024;
     }
     m_upload_max_bytes = upload_max_bytes;
+    m_user_storage_quota_bytes = user_storage_quota_bytes;
 }
 
 void HttpConnection::set_legacy_compat(bool enabled)
@@ -377,6 +361,7 @@ bool HttpConnection::requires_auth() const
         return false;
     }
     return strncasecmp(m_url, "/api/private/", strlen("/api/private/")) == 0 ||
+           strncasecmp(m_url, "/api/drive/", strlen("/api/drive/")) == 0 ||
            strncasecmp(m_url, "/api/admin/", strlen("/api/admin/")) == 0;
 }
 

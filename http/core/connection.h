@@ -4,16 +4,27 @@
 #include <sys/epoll.h>
 #include <netinet/in.h>
 #include <sys/stat.h>
+#include <cstddef>
 #include <cstdio>
 #include <ctime>
 #include <map>
 #include <string>
 #include <vector>
-#include <mysql/mysql.h>
 
-#include "../files/file_types.h"
 #include "ring_buffer.h"
-#include "../../lock/locker.h"
+#include "../../infra/lock/locker.h"
+
+typedef struct MYSQL MYSQL;
+
+namespace repo_mysql
+{
+struct OperationLogItem;
+}
+
+namespace service_files
+{
+struct UploadPayload;
+}
 
 struct ssl_st;
 using SSL = ssl_st;
@@ -94,7 +105,7 @@ public:
     // Public lifecycle and socket state.
     void init(int epollfd, int sockfd, const sockaddr_in &addr, const string &root, int trig_mode, int close_log);
     static void configure_tls(SSL_CTX *ssl_ctx, bool https_enabled);
-    static void configure_uploads(size_t upload_max_bytes);
+    static void configure_uploads(size_t upload_max_bytes, size_t user_storage_quota_bytes);
     static void set_legacy_compat(bool enabled);
     void close_conn(bool real_close = true);
     void process();
@@ -123,19 +134,6 @@ public:
     int improv;
 
 private:
-    struct ManagedUploadPayload
-    {
-        string filename;
-        string content;
-        string content_type;
-        string temp_path;
-        string sha256;
-        long size;
-        bool use_temp_file;
-
-        ManagedUploadPayload() : size(0), use_temp_file(false) {}
-    };
-
     // Core protocol and connection handling.
     void init();
     bool read_once_et();
@@ -185,6 +183,13 @@ private:
     HTTP_CODE route_fans_page();
     HTTP_CODE route_request();
     HTTP_CODE handle_api_request();
+    HTTP_CODE handle_api_private_files_collection();
+    HTTP_CODE handle_api_private_file_item(const char *path);
+    HTTP_CODE handle_api_drive_request();
+    HTTP_CODE handle_api_drive_folder_item(const char *path);
+    HTTP_CODE handle_api_drive_file_item(const char *path);
+    HTTP_CODE handle_api_public_file_item(const char *path);
+    HTTP_CODE handle_api_share_item(const char *path);
     HTTP_CODE handle_static_route();
     HTTP_CODE open_static_file();
 
@@ -218,41 +223,35 @@ private:
 
     // Authentication and session management.
     string make_session_token(const string &username) const;
-    string make_password_salt() const;
-    string hash_password(const string &password, const string &salt) const;
-    string make_password_record(const string &password) const;
     string extract_bearer_token() const;
-    bool lookup_session(const string &token, string &username);
-    bool persist_session(const string &token, const string &username, int ttl_seconds);
-    bool refresh_session(const string &token, const string &username, int ttl_seconds);
-    bool remove_session(const string &token);
-    bool remove_user_sessions(const string &username, const string &except_token);
-    bool verify_user_password(const string &username, const string &password);
-    bool update_user_password_hash(const string &username, const string &password);
     HTTP_CODE handle_auth_request(bool is_register, bool api_mode);
     HTTP_CODE handle_logout_request();
 
     // File service helpers and handlers.
-    HTTP_CODE load_owned_file_record(long file_id, ManagedFileRecord &record, bool include_deleted = false);
     bool write_operation_log(const string &username, const string &action, const string &resource_type,
                              long resource_id, const string &detail);
     HTTP_CODE handle_file_upload();
+    HTTP_CODE handle_file_upload_preflight();
     HTTP_CODE handle_file_list();
+    HTTP_CODE handle_drive_item_list();
+    HTTP_CODE handle_drive_folder_create();
+    HTTP_CODE handle_drive_folder_delete(const char *path);
+    HTTP_CODE handle_drive_file_upload();
     HTTP_CODE handle_public_file_list();
     HTTP_CODE handle_public_file_detail(const char *path);
     HTTP_CODE handle_file_download(const char *path);
     HTTP_CODE handle_public_file_download(const char *path);
+    HTTP_CODE handle_file_share_create(const char *path);
+    HTTP_CODE handle_share_detail(const char *path);
+    HTTP_CODE handle_share_download(const char *path);
     HTTP_CODE handle_file_delete(const char *path);
     HTTP_CODE handle_file_visibility_update(const char *path);
     HTTP_CODE handle_file_restore(const char *path);
     HTTP_CODE handle_operation_list();
     HTTP_CODE handle_operation_delete(const char *path);
     bool open_managed_file(const string &path, const string &content_type, const string &download_name);
-    bool parse_managed_upload_payload(ManagedUploadPayload &payload, int &status, const char *&title, string &message);
-    string build_private_file_list_json(MYSQL_RES *result, long next_cursor, int limit, bool include_deleted) const;
-    string build_public_file_list_json(MYSQL_RES *result, long next_cursor, int limit) const;
-    string build_operation_list_json(MYSQL_RES *result) const;
-    string ensure_unique_owned_filename(const string &requested_name, long ignore_file_id = 0);
+    bool parse_managed_upload_payload(service_files::UploadPayload &payload, int &status, const char *&title, string &message);
+    string build_operation_list_json(const vector<repo_mysql::OperationLogItem> &operations) const;
     bool begin_streamed_body_capture();
     bool append_streamed_body_chunk(const char *data, size_t len);
     void reset_streamed_body_buffer();
@@ -366,6 +365,7 @@ private:
     static bool m_legacy_compat_enabled;
     static size_t m_upload_max_bytes;
     static size_t m_upload_request_overhead_bytes;
+    static size_t m_user_storage_quota_bytes;
 };
 
 #endif

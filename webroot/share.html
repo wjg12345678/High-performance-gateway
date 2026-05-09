@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Atlas WebServer | 文件分享</title>
+        <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+        <link rel="stylesheet" href="/atlas.css">
+        <style>
+            .shell {
+                width: min(760px, calc(100% - 32px));
+            }
+
+            .card {
+                border: 1px solid rgba(159, 77, 47, 0.15);
+                border-radius: 28px;
+                background: var(--panel-strong);
+                box-shadow: var(--shadow);
+                padding: 24px;
+            }
+
+            .file-name {
+                margin: 0;
+                font-size: clamp(28px, 5vw, 40px);
+                line-height: 1.2;
+                max-width: 100%;
+                overflow-wrap: anywhere;
+                word-break: break-word;
+            }
+
+            .meta {
+                margin-top: 14px;
+                color: var(--muted);
+                font-size: 14px;
+                line-height: 1.7;
+            }
+
+            .status {
+                margin-top: 18px;
+                padding: 14px 16px;
+                border-radius: 16px;
+                background: rgba(159, 77, 47, 0.08);
+                color: var(--muted);
+                line-height: 1.6;
+            }
+
+            .status.error {
+                background: rgba(165, 87, 34, 0.12);
+                color: var(--warn);
+            }
+
+            .actions {
+                margin-top: 22px;
+                display: flex;
+                gap: 12px;
+                flex-wrap: wrap;
+            }
+
+            .actions a,
+            .actions button {
+                text-decoration: none;
+            }
+
+            .code-form {
+                margin-top: 16px;
+                display: none;
+                gap: 10px;
+                flex-wrap: wrap;
+            }
+
+            .code-form input {
+                flex: 1 1 220px;
+                min-height: 42px;
+                border: 1px solid rgba(159, 77, 47, 0.2);
+                border-radius: 14px;
+                padding: 0 14px;
+                background: rgba(255, 255, 255, 0.72);
+            }
+        </style>
+    </head>
+    <body>
+        <div class="shell">
+            <section class="hero">
+                <p class="eyebrow">File Share</p>
+                <h1>文件分享</h1>
+                <p>通过分享链接可访问文件；支持提取码、过期时间和下载次数限制。</p>
+            </section>
+
+            <section class="card">
+                <h2 id="file-name" class="file-name">正在加载文件信息...</h2>
+                <div id="file-meta" class="meta">请稍候，系统正在读取分享内容。</div>
+                <div id="file-status" class="status">准备分享信息中。</div>
+                <div id="code-form" class="code-form">
+                    <input id="access-code-input" type="text" placeholder="请输入提取码" autocomplete="off">
+                    <button id="access-code-btn" type="button" class="secondary">确认提取码</button>
+                </div>
+                <div class="actions">
+                    <a id="download-link" class="link-button" href="#" download style="pointer-events: none; opacity: 0.6;">下载文件</a>
+                    <button id="copy-link-btn" type="button" class="secondary">复制当前分享链接</button>
+                </div>
+            </section>
+        </div>
+
+        <script>
+            (function () {
+                const fileName = document.getElementById("file-name");
+                const fileMeta = document.getElementById("file-meta");
+                const fileStatus = document.getElementById("file-status");
+                const downloadLink = document.getElementById("download-link");
+                const copyLinkBtn = document.getElementById("copy-link-btn");
+                const codeForm = document.getElementById("code-form");
+                const accessCodeInput = document.getElementById("access-code-input");
+                const accessCodeBtn = document.getElementById("access-code-btn");
+                const params = new URLSearchParams(window.location.search);
+                const shareToken = params.get("token");
+                const legacyFileId = params.get("id");
+                let currentAccessCode = params.get("code") || params.get("access_code") || "";
+
+                function setStatus(message, isError) {
+                    fileStatus.textContent = message;
+                    fileStatus.className = isError ? "status error" : "status";
+                }
+
+                function escapeHtml(value) {
+                    return String(value || "")
+                        .replace(/&/g, "&amp;")
+                        .replace(/</g, "&lt;")
+                        .replace(/>/g, "&gt;")
+                        .replace(/"/g, "&quot;")
+                        .replace(/'/g, "&#39;");
+                }
+
+                function formatBytes(bytes) {
+                    const value = Number(bytes) || 0;
+                    if (value <= 0) {
+                        return "0 MB";
+                    }
+                    const mb = value / (1024 * 1024);
+                    if (mb < 0.01) {
+                        return "< 0.01 MB";
+                    }
+                    return mb.toFixed(2) + " MB";
+                }
+
+                function withAccessCode(url) {
+                    if (!currentAccessCode) {
+                        return url;
+                    }
+                    return url + (url.indexOf("?") >= 0 ? "&" : "?") + "code=" + encodeURIComponent(currentAccessCode);
+                }
+
+                function enableDownload(url, filename) {
+                    downloadLink.href = url;
+                    downloadLink.download = filename || "download";
+                    downloadLink.style.pointerEvents = "auto";
+                    downloadLink.style.opacity = "1";
+                }
+
+                function showAccessCodeForm(message) {
+                    codeForm.style.display = "flex";
+                    fileName.textContent = "需要提取码";
+                    fileMeta.textContent = "该分享链接设置了提取码，请输入后继续访问。";
+                    setStatus(message || "请输入提取码后继续。", true);
+                    accessCodeInput.focus();
+                }
+
+                async function copyCurrentLink() {
+                    if (navigator.clipboard && navigator.clipboard.writeText) {
+                        await navigator.clipboard.writeText(window.location.href);
+                        return;
+                    }
+                    const input = document.createElement("input");
+                    input.value = window.location.href;
+                    document.body.appendChild(input);
+                    input.select();
+                    document.execCommand("copy");
+                    input.remove();
+                }
+
+                async function fetchJson(url) {
+                    const response = await fetch(url);
+                    const text = await response.text();
+                    const data = text ? JSON.parse(text) : {};
+                    if (!response.ok) {
+                        const error = new Error(data.message || ("HTTP " + response.status));
+                        error.status = response.status;
+                        throw error;
+                    }
+                    return data;
+                }
+
+                async function loadTokenShare() {
+                    const data = await fetchJson(withAccessCode("/api/share/" + encodeURIComponent(shareToken)));
+                    if (!data.share) {
+                        throw new Error("share not found");
+                    }
+
+                    const share = data.share;
+                    codeForm.style.display = share.has_access_code ? "flex" : "none";
+                    document.title = "Atlas WebServer | " + share.filename;
+                    fileName.textContent = share.filename;
+                    fileMeta.innerHTML =
+                        "类型: " + escapeHtml(share.content_type) +
+                        "<br>大小: " + formatBytes(share.size) +
+                        "<br>文件 ID: #" + share.file_id +
+                        "<br>过期时间: " + escapeHtml(share.expires_at || "永久有效") +
+                        "<br>下载次数: " + Number(share.download_count || 0) +
+                        (Number(share.max_downloads || 0) > 0 ? " / " + Number(share.max_downloads) : " / 不限");
+                    enableDownload(withAccessCode(share.download_url), share.filename);
+                    setStatus("分享内容已就绪，可直接下载。", false);
+                }
+
+                async function loadLegacyPublicFile() {
+                    const data = await fetchJson("/api/files/public/" + encodeURIComponent(legacyFileId));
+                    if (!data.file) {
+                        throw new Error("file not found");
+                    }
+
+                    const file = data.file;
+                    document.title = "Atlas WebServer | " + file.filename;
+                    fileName.textContent = file.filename;
+                    fileMeta.innerHTML =
+                        "上传者: " + escapeHtml(file.owner) +
+                        "<br>类型: " + escapeHtml(file.content_type) +
+                        "<br>大小: " + formatBytes(file.size) +
+                        "<br>文件 ID: #" + file.id;
+                    enableDownload(file.download_url, file.filename || ("file-" + file.id));
+                    setStatus("公开文件分享内容已就绪，可直接下载。", false);
+                }
+
+                async function loadFile() {
+                    if (!shareToken && !legacyFileId) {
+                        fileName.textContent = "分享链接不可用";
+                        fileMeta.textContent = "当前链接缺少分享 token 或文件 ID，请重新生成分享链接。";
+                        setStatus("未检测到有效的分享参数。", true);
+                        return;
+                    }
+
+                    try {
+                        if (shareToken) {
+                            await loadTokenShare();
+                            return;
+                        }
+                        await loadLegacyPublicFile();
+                    } catch (error) {
+                        if (shareToken && error.status === 403) {
+                            showAccessCodeForm(error.message || "请输入提取码后继续。");
+                            return;
+                        }
+                        fileName.textContent = "文件暂不可访问";
+                        fileMeta.textContent = "该分享内容可能已过期、被删除、超过下载次数，或链接信息无效。";
+                        setStatus("分享内容加载未完成: " + error.message, true);
+                    }
+                }
+
+                accessCodeBtn.addEventListener("click", function () {
+                    currentAccessCode = accessCodeInput.value.trim();
+                    if (!currentAccessCode) {
+                        showAccessCodeForm("请输入提取码。");
+                        return;
+                    }
+                    loadFile();
+                });
+
+                accessCodeInput.addEventListener("keydown", function (event) {
+                    if (event.key === "Enter") {
+                        accessCodeBtn.click();
+                    }
+                });
+
+                copyLinkBtn.addEventListener("click", function () {
+                    copyCurrentLink()
+                        .then(function () {
+                            setStatus("当前分享链接已复制。", false);
+                        })
+                        .catch(function () {
+                            setStatus("分享链接复制未完成，请稍后重试。", true);
+                        });
+                });
+
+                loadFile();
+            })();
+        </script>
+    </body>
+</html>

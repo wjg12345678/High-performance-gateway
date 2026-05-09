@@ -64,7 +64,7 @@ sequenceDiagram
     participant SR as SubReactor
     participant TP as Thread Pool
     participant HC as http_conn
-    participant FS as root/uploads
+    participant FS as webroot/uploads
     participant DB as MySQL
 
     C->>SR: POST /api/private/files
@@ -91,7 +91,7 @@ sequenceDiagram
     participant TP as Thread Pool
     participant HC as http_conn
     participant DB as MySQL
-    participant FS as root/uploads
+    participant FS as webroot/uploads
 
     C->>SR: GET /api/private/files/:id/download
     SR->>TP: append_p()

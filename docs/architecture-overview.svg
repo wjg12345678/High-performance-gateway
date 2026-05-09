@@ -77,7 +77,7 @@
     <rect x="654" y="744" width="286" height="122" rx="26" fill="url(#panel)"/>
     <rect x="654.75" y="744.75" width="284.5" height="120.5" rx="25.25" stroke="#D1B190"/>
     <text x="726" y="789" fill="#9A4D31" font-family="Georgia, 'Songti SC', serif" font-size="18" letter-spacing="2">FILE STORAGE</text>
-    <text x="713" y="828" fill="#2D231A" font-family="Georgia, 'Songti SC', serif" font-size="28" font-weight="700">root/uploads</text>
+    <text x="713" y="828" fill="#2D231A" font-family="Georgia, 'Songti SC', serif" font-size="28" font-weight="700">webroot/uploads</text>
     <text x="689" y="853" fill="#7C6552" font-family="Georgia, 'Songti SC', serif" font-size="18">小文件落盘，下载直接回传</text>
 
     <rect x="1064" y="744" width="286" height="122" rx="26" fill="url(#panel)"/>

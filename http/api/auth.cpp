@@ -1,25 +1,46 @@
 #include "../core/connection.h"
-#include "auth_state.h"
-
-#include <cstring>
+#include "../../service/auth/auth_service.h"
 
 using namespace std;
 
 namespace
 {
-const int kSessionTtlSeconds = 7 * 24 * 3600;
-
-struct JsonResponseSpec
+string auth_json_escape(const string &value)
 {
-    int status;
-    const char *title;
-    const char *body;
-};
-
-bool is_truthy_value(const string &value)
-{
-    return value == "1" || value == "true" || value == "TRUE" ||
-           value == "yes" || value == "on";
+    string escaped;
+    escaped.reserve(value.size());
+    for (char ch : value)
+    {
+        switch (ch)
+        {
+        case '\\':
+            escaped += "\\\\";
+            break;
+        case '"':
+            escaped += "\\\"";
+            break;
+        case '\n':
+            escaped += "\\n";
+            break;
+        case '\r':
+            escaped += "\\r";
+            break;
+        case '\t':
+            escaped += "\\t";
+            break;
+        default:
+            if (static_cast<unsigned char>(ch) < 0x20)
+            {
+                escaped += " ";
+            }
+            else
+            {
+                escaped += ch;
+            }
+            break;
+        }
+    }
+    return escaped;
 }
 }
 
@@ -54,77 +75,51 @@ HttpConnection::HTTP_CODE HttpConnection::handle_auth_request(bool is_register, 
         return BAD_REQUEST;
     }
 
-    bool success = false;
+    service_auth::AuthResult result;
     if (is_register)
     {
-        const string password_record = make_password_record(password);
-        if (password_record.empty())
+        service_auth::register_user(mysql, name, password, result);
+        if (result.success)
         {
-            return api_mode
-                       ? respond_json_error(500, "Internal Error", "failed to prepare password hash")
-                       : INTERNAL_ERROR;
+            write_operation_log(name, "register", "user", 0, "register success");
         }
-
-        const string sql_insert = "INSERT INTO user(username, passwd, passwd_salt) VALUES('" +
-                                  escape_sql_value(name) + "', '" +
-                                  escape_sql_value(password_record) + "', '')";
-
-        map<string, string> &user_cache = auth_user_cache();
-        locker &cache_lock = auth_cache_lock();
-        cache_lock.lock();
-        if (user_cache.find(name) == user_cache.end())
-        {
-            int res = mysql_query(mysql, sql_insert.c_str());
-            if (!res)
-            {
-                user_cache[name] = password_record;
-                success = true;
-                write_operation_log(name, "register", "user", 0, "register success");
-            }
-        }
-        cache_lock.unlock();
 
         if (api_mode)
         {
-            const JsonResponseSpec response = success
-                                                  ? JsonResponseSpec{200, "OK", "{\"code\":0,\"message\":\"register success\"}"}
-                                                  : JsonResponseSpec{409, "Conflict", "{\"code\":409,\"message\":\"register failed\"}"};
-            set_memory_response(response.status, response.title, response.body, "application/json");
+            const string body = result.success
+                                    ? "{\"code\":0,\"message\":\"register success\"}"
+                                    : string("{\"code\":") + to_string(result.status) + ",\"message\":\"" +
+                                          auth_json_escape(result.message) + "\"}";
+            set_memory_response(result.status, result.title, body, "application/json");
             return MEMORY_REQUEST;
         }
 
-        set_request_target(success ? "/login" : "/register-error");
+        if (!result.success && result.status >= 500)
+        {
+            return INTERNAL_ERROR;
+        }
+        set_request_target(result.success ? "/login" : "/register-error");
         return do_request();
     }
 
-    success = verify_user_password(name, password);
+    service_auth::login_user(mysql, name, password, result);
     if (api_mode)
     {
-        if (success)
+        if (result.success)
         {
-            const string token = make_session_token(name);
-            if (token.empty())
-            {
-                return respond_json_error(500, "Internal Error", "failed to issue session");
-            }
-            if (!persist_session(token, name, kSessionTtlSeconds))
-            {
-                return respond_json_error(500, "Internal Error", "failed to persist session");
-            }
-            if (!remove_user_sessions(name, token))
-            {
-                remove_session(token);
-                return respond_json_error(500, "Internal Error", "failed to revoke previous sessions");
-            }
             m_current_user = name;
             write_operation_log(name, "login", "user", 0, "login success");
 
             string response = string("{\"code\":0,\"message\":\"login success\",\"target\":\"/welcome\",\"token\":\"") +
-                              json_escape(token) + "\",\"expires_in\":604800}";
+                              auth_json_escape(result.token) + "\",\"expires_in\":" + to_string(result.expires_in) + "}";
             set_memory_response(200, "OK", response, "application/json");
         }
         else
         {
+            if (result.status >= 500)
+            {
+                return respond_json_error(result.status, result.title, result.message);
+            }
             set_memory_response(401, "Unauthorized",
                                 "{\"code\":401,\"message\":\"login failed\"}",
                                 "application/json");
@@ -133,7 +128,7 @@ HttpConnection::HTTP_CODE HttpConnection::handle_auth_request(bool is_register, 
         return MEMORY_REQUEST;
     }
 
-    set_request_target(success ? "/welcome" : "/login-error");
+    set_request_target(result.success ? "/welcome" : "/login-error");
     return do_request();
 }
 
@@ -149,10 +144,8 @@ HttpConnection::HTTP_CODE HttpConnection::handle_logout_request()
     }
 
     const bool logout_all = request_value("scope") == "all" ||
-                            is_truthy_value(request_value("all_sessions"));
-    const bool removed = logout_all ? remove_user_sessions(m_current_user, "")
-                                    : remove_session(token);
-    if (!removed)
+                            service_auth::is_truthy_value(request_value("all_sessions"));
+    if (!service_auth::logout(mysql, m_current_user, token, logout_all))
     {
         return respond_json_error(500, "Internal Error", "failed to invalidate session");
     }

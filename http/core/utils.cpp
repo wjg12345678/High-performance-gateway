@@ -3,6 +3,7 @@
 #include <cctype>
 #include <cstdlib>
 #include <cstring>
+#include <mysql/mysql.h>
 #include <openssl/evp.h>
 
 using namespace std;

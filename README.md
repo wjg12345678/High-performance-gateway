@@ -38,6 +38,8 @@ curl -i http://127.0.0.1:9006/healthz
 | Web | `http://127.0.0.1:9006` |
 | MySQL | `127.0.0.1:3307` |
 
+面试或评审现场建议直接按 [5 分钟复现指南](docs/quickstart-5min.md) 执行，覆盖注册、登录、上传、下载和真实 chunked 上传。
+
 停止：
 
 ```bash
@@ -83,8 +85,9 @@ make server
 | 认证 | `POST /api/register`、`POST /api/login` |
 | 会话 | `GET /api/private/ping`、`POST /api/private/logout` |
 | 操作日志 | `GET /api/private/operations`、`DELETE /api/private/operations/:id` |
-| 私有文件 | `GET /api/private/files`、`POST /api/private/files`、`GET /api/private/files/:id/download` |
+| 私有文件 | `GET /api/private/files`、`POST /api/private/files`、`POST /api/private/files/preflight`、`GET /api/private/files/:id/download` |
 | 文件管理 | `DELETE /api/private/files/:id`、`POST /api/private/files/:id/restore`、`POST /api/private/files/:id/visibility` |
+| 分享链接 | `POST /api/private/files/:id/share`、`GET /api/share/:token`、`GET /api/share/:token/download` |
 | 公开文件 | `GET /api/files/public`、`GET /api/files/public/:id`、`GET /api/files/public/:id/download` |
 
 完整字段和响应示例见 [docs/api.md](docs/api.md)。
@@ -110,6 +113,11 @@ curl -sS http://127.0.0.1:9006/api/private/ping \
 主上传路径是 `multipart/form-data`：
 
 ```bash
+curl -sS -X POST http://127.0.0.1:9006/api/private/files/preflight \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"size":12345,"folder_id":0}'
+
 curl -sS -X POST http://127.0.0.1:9006/api/private/files \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Expect:' \
@@ -132,7 +140,7 @@ flowchart LR
     API[Auth / API]
     Files[File Service]
     DB[(MySQL)]
-    FS[(root/uploads)]
+    FS[(webroot/uploads)]
     Log[Log]
 
     Client --> Main --> Sub --> Pool --> HTTP
@@ -144,13 +152,13 @@ flowchart LR
 
 核心流程：
 
-1. `main.cpp` 读取 `server.conf`，再应用环境变量和命令行覆盖。
-2. `webserver.cpp` 初始化日志、TLS、MySQL 连接池、线程池和监听 socket。
+1. `app/main.cpp` 读取 `server.conf`，再应用环境变量和命令行覆盖。
+2. `app/webserver.cpp` 初始化日志、TLS、MySQL 连接池、线程池和监听 socket。
 3. 主 Reactor 接收连接，按轮询分配到 SubReactor。
 4. `http/core/io.cpp` 负责 socket / TLS 读写与 ring buffer。
 5. `http/core/parser.cpp` 解析请求行、Header、Content-Length body 和 chunked body。
-6. `http/core/router.cpp` 分发静态资源、认证接口、文件接口和公开文件接口。
-7. `http/files/file_service.cpp` 处理上传临时文件、元数据入库、下载、回收站和公开分享。
+6. `http/router/router.cpp` 分发静态资源、认证接口、文件接口和公开文件接口。
+7. `http/api/`、`http/files/` 负责 HTTP 适配，`service/auth/`、`service/files/` 负责编排业务，`infra/storage/` 负责磁盘路径、临时文件、落盘、移动和 SHA-256。
 
 更多细节见 [docs/architecture.md](docs/architecture.md) 和 [docs/request-sequence.md](docs/request-sequence.md)。
 
@@ -158,24 +166,27 @@ flowchart LR
 
 ```text
 .
-|-- main.cpp                     # 程序入口、daemon supervisor、信号处理
-|-- webserver.cpp                # 服务初始化、主 Reactor、连接分发
-|-- webserver_sub_reactor.cpp    # SubReactor 事件循环
-|-- config.cpp / config.h        # 配置文件、环境变量、命令行解析
-|-- server.conf                  # 默认配置
+|-- app/                         # 程序入口、配置解析、WebServer/Reactor 启动层
 |-- http/
-|   |-- core/                    # HTTP parser、router、IO、response、runtime
-|   |-- api/                     # 认证、会话、操作日志
-|   `-- files/                   # 文件存储、上传解析、公开分享
-|-- CGImysql/                    # MySQL 连接池
-|-- threadpool/                  # 动态线程池与任务队列
-|-- timer/                       # 连接超时管理
-|-- log/                         # 同步/异步日志
-|-- root/                        # 前端页面、静态资源、上传目录
+|   |-- core/                    # HTTP connection、parser、IO、response、runtime
+|   |-- router/                  # 路由表、静态资源分发
+|   |-- api/                     # 认证、会话、操作日志 HTTP 适配
+|   `-- files/                   # 文件上传解析、下载响应等 HTTP 适配
+|-- service/                     # 认证、文件等业务编排
+|-- repo/mysql/                  # DAO / Repository，集中管理 SQL 与结果映射
+|-- infra/
+|   |-- db/                      # MySQL 连接池
+|   |-- storage/                 # 文件系统存储封装：路径、目录、落盘、移动、哈希
+|   |-- threadpool/              # 动态线程池与任务队列
+|   |-- timer/                   # 连接超时管理
+|   |-- log/                     # 同步/异步日志
+|   `-- lock/                    # 线程同步封装
+|-- webroot/                     # 前端页面、静态资源、上传目录
 |-- scripts/                     # 冒烟测试、API 测试、benchmark、perf 脚本
 |-- tests/                       # C++ parser 单测
 |-- docs/                        # 架构、API、benchmark 和 perf 文档
 |-- docker/                      # Docker 辅助文件与 MySQL 初始化 SQL
+|-- deploy/                      # Nginx 等部署示例
 `-- .github/workflows/           # CI：parser + ASan/UBSan + chunked API 集成
 ```
 
@@ -197,6 +208,7 @@ flowchart LR
 | `threadpool_queue_mode` | `TWS_THREADPOOL_QUEUE_MODE` | `mutex` | 任务队列实现，支持 `mutex` / `lockfree` |
 | `mysql_idle_timeout` | `TWS_MYSQL_IDLE_TIMEOUT` | `60` | MySQL 连接空闲检查 |
 | `upload_max_bytes` | `TWS_UPLOAD_MAX_BYTES` | `104857600` | 单文件上传上限，默认 100 MiB |
+| `user_storage_quota_bytes` | `TWS_USER_STORAGE_QUOTA_BYTES` | `1073741824` | 单用户总容量上限，默认 1 GiB，`0` 表示不限制 |
 | `conn_timeout` | `TWS_CONN_TIMEOUT` | `15` | HTTP 连接空闲超时 |
 | `close_log` | `TWS_CLOSE_LOG` | `0` | `1` 关闭日志 |
 | `daemon_mode` | `TWS_DAEMON_MODE` | `0` | daemon supervisor 模式 |
@@ -224,6 +236,7 @@ flowchart LR
 | `scripts/run_smoke_suite.sh` | 运行认证、私有接口、文件、chunked API 冒烟测试 |
 | `scripts/test_chunked_api.sh` | 发送真实 chunked 请求，验证 echo 和 multipart 上传 |
 | `scripts/run_benchmark_suite.sh` | 执行 wrk benchmark 并生成 CSV / gate 文件 |
+| `docs/quickstart-5min.md` | 5 分钟复现注册、登录、上传、下载和 chunked 上传 |
 | `make clean` | 清理构建产物 |
 
 CI 工作流位于 `.github/workflows/ci.yml`，会执行：
@@ -250,7 +263,7 @@ CI 工作流位于 `.github/workflows/ci.yml`，会执行：
 - Web / MySQL 容器 `RestartCount` 压测前后不增长
 - 压测窗口内 Web 日志没有 `server received SIGSEGV`
 
-当前仓库里的历史数据和图表用于开发机观察与瓶颈定位，不作为正式发布基准。完整说明见 [docs/benchmark.md](docs/benchmark.md)、[docs/benchmark.csv](docs/benchmark.csv) 和 [docs/perf-flamegraph.md](docs/perf-flamegraph.md)。
+当前仓库将 `errors=none` / `Socket errors=0` 的结果作为可信 headline；详见 [docs/benchmark.md](docs/benchmark.md) 和 [docs/benchmark-trusted.csv](docs/benchmark-trusted.csv)。历史矩阵 [docs/benchmark.csv](docs/benchmark.csv) 与图表只用于开发机观察和瓶颈定位，不作为正式发布基准。
 
 ## 数据与存储
 
@@ -263,7 +276,7 @@ Docker 初始化 SQL 位于 `docker/mysql/init.sql`，主要表包括：
 | `files` | 文件元数据、公开状态、软删除状态、SHA-256 |
 | `operation_logs` | 登录、上传、删除等操作记录 |
 
-上传文件默认存储在 `root/uploads/`，该目录在 Docker Compose 中挂载到宿主机。
+上传文件默认存储在 `webroot/uploads/`，该目录在 Docker Compose 中挂载到宿主机。
 
 ## 安全与限制
 
@@ -272,6 +285,7 @@ Docker 初始化 SQL 位于 `docker/mysql/init.sql`，主要表包括：
 - 默认主上传路径只接受 `multipart/form-data`；兼容 JSON/base64 上传仅在 `legacy_compat=1` 时启用。
 - 当前 parser 支持 chunked request body，但响应仍使用 `Content-Length`。
 - 默认单文件上传上限为 100 MiB，可用 `TWS_UPLOAD_MAX_BYTES` 调整。
+- 默认单用户总容量上限为 1 GiB，可用 `TWS_USER_STORAGE_QUOTA_BYTES` 调整，软删除文件仍计入容量。
 
 ## 文档索引
 

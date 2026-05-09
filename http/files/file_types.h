@@ -6,6 +6,8 @@
 struct ManagedFileRecord
 {
     long file_id;
+    long folder_id;
+    long physical_id;
     long file_size;
     bool is_public;
     bool is_deleted;
@@ -16,7 +18,7 @@ struct ManagedFileRecord
     std::string content_sha256;
     std::string deleted_at;
 
-    ManagedFileRecord() : file_id(0), file_size(0), is_public(false), is_deleted(false) {}
+    ManagedFileRecord() : file_id(0), folder_id(0), physical_id(0), file_size(0), is_public(false), is_deleted(false) {}
 };
 
 #endif

@@ -42,10 +42,26 @@
 - 时长：`10s`
 - 统一使用 `wrk --latency`
 - `login` 请求体：`48B` JSON
-- `upload` 请求体：`101B` JSON + Base64
+- `upload` 请求体：`336B` multipart/form-data 小文件
 - 鉴权接口均使用 Bearer Token
 
 `wrk --latency` 原生输出只给到 `50/75/90/99` 分位，所以这里统一记录 `Avg / P50 / P90 / P99`，不伪造 `P95`。
+
+
+## 可信 Headline 样本
+
+正式对外只引用 `errors=none` / `Socket errors=0` 的 case。下面这组样本来自 `best_mutex_fixed_20260423`，固定 `wrk -t4 -d15s --latency`、`TWS_LOG_WRITE=0`、`TWS_THREAD_NUM=8`、`TWS_SQL_NUM=8`，Web 和 MySQL 为同机 Docker Compose 容器。
+
+`wrk --latency` 原生只输出 `P50/P75/P90/P99`，没有 `P95`，因此表中 `P95` 记为 `NA`，不伪造不存在的分位值。结构化数据见 [benchmark-trusted.csv](benchmark-trusted.csv)。
+
+| 场景 | 并发 | QPS | P95 | P99 | 错误率 | Web CPU 峰值 | Web 内存峰值 | MySQL CPU 峰值 | MySQL 内存峰值 |
+| --- | ---: | ---: | --- | --- | ---: | ---: | ---: | ---: | ---: |
+| `GET /` | 100 | 6549.32 | NA | 50.65ms | 0% | 415.34% | 119.7 MiB | 14.16% | 437 MiB |
+| `POST /api/login` | 100 | 988.30 | NA | 161.76ms | 0% | 119.25% | 118.6 MiB | 178.62% | 442 MiB |
+| `GET /api/private/ping` | 100 | 8336.97 | NA | 69.31ms | 0% | 524.76% | 121 MiB | 39.87% | 441.6 MiB |
+| `GET /api/private/files` | 100 | 5356.82 | NA | 81.27ms | 0% | 536.03% | 120.5 MiB | 489.04% | 441.8 MiB |
+
+这些数据适合作为简历和答辩中的保守口径；带 `read/timeout/write` 错误的高并发结果只用于说明拐点和瓶颈，不作为 headline。当前 benchmark runner 的上传 case 已改为 multipart，小文件上传 headline 需要重新采集到 `Socket errors=0` 后再对外引用。
 
 ## 主体矩阵
 
@@ -99,7 +115,7 @@
 
 - 轻接口主要吃 `web` 容器 CPU，MySQL 占用很低。
 - `GET /api/private/files` 的 MySQL 峰值 CPU 多次接近或超过 `4~5` 个核的量级，是当前最明显的数据库热点。
-- `POST /api/private/files` 的 `web` CPU 并不夸张，但延迟很高，说明瓶颈不只是 Web 线程本身，更像是鉴权、写库、Base64 解码和磁盘写入叠加造成的长链路开销。
+- `POST /api/private/files` 的 `web` CPU 并不夸张，但延迟很高，说明瓶颈不只是 Web 线程本身，更像是鉴权、multipart 解析、写库和磁盘写入叠加造成的长链路开销。
 
 ## 前后对比实验
 
@@ -172,14 +188,12 @@
 - 如果继续优化，优先级应该是：
   1. 日志模块实现
   2. `files` 列表与登录链路的 MySQL 访问
-  3. 上传路径的 Base64 和磁盘写入成本
+  3. 上传路径的 multipart 解析和磁盘写入成本
 
 ## 原始结果位置
 
-- 主体矩阵：`reports/benchmarks/20260413_155116/`
-- 同步/异步日志对比：
-  - `reports/benchmarks/20260413_153624/`
-  - `reports/benchmarks/20260413_154220/`
+- 新 benchmark 结果默认生成到 `reports/benchmarks/<timestamp>/`，该目录作为运行产物不提交。
+- 可信 headline：已整理进 [benchmark-trusted.csv](benchmark-trusted.csv)
 - 1000 并发补充：本轮手工 `wrk` 输出，已整理进 [benchmark.csv](benchmark.csv)
 
 ## benchmark.csv 字段说明

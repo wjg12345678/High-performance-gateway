@@ -17,7 +17,7 @@ flowchart LR
     Pool[Dynamic Thread Pool]
     HTTP[http_conn<br/>HTTP parse + route + middleware]
     MySQL[(MySQL<br/>user / user_sessions / files / operation_logs)]
-    Files[(root/uploads)]
+    Files[(webroot/uploads)]
     Log[Async Log]
 
     Client --> Main
@@ -37,7 +37,7 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-    A[main.cpp] --> B[读取 server.conf / 环境变量]
+    A[app/main.cpp] --> B[读取 server.conf / 环境变量]
     B --> C[WebServer::init]
     C --> D[log_write]
     D --> E[tls_init]
@@ -51,7 +51,7 @@ flowchart TD
 
 说明：
 
-- `main.cpp` 负责组装所有配置并驱动服务启动
+- `app/main.cpp` 负责组装所有配置并驱动服务启动
 - `sql_pool()` 初始化 MySQL 连接池并预加载用户数据
 - `thread_pool()` 创建动态线程池
 - `eventListen()` 创建监听 socket、主 `epoll` 和 SubReactor
@@ -115,7 +115,7 @@ flowchart TD
     Req[POST /api/private/files]
     Auth[middleware_auth]
     Parse[parse_post_body<br/>JSON / form / multipart]
-    Store[写入 root/uploads]
+    Store[写入 webroot/uploads]
     Meta[写入 files 表]
     Audit[写入 operation_logs]
     Resp[返回 file id / metadata]
@@ -130,7 +130,7 @@ flowchart TD
 
 说明：
 
-- 上传文件内容落盘到 `root/uploads`
+- 上传文件内容落盘到 `webroot/uploads`
 - 文件元数据单独写入 `files`
 - 上传、下载、删除、登录等行为写入 `operation_logs`
 

@@ -46,7 +46,7 @@ services:
       TWS_UPLOAD_MAX_BYTES: ${TWS_UPLOAD_MAX_BYTES:-104857600}
       TWS_CONN_TIMEOUT: ${TWS_CONN_TIMEOUT:-15}
     volumes:
-      - ./root/uploads:/app/root/uploads
+      - ./webroot/uploads:/app/webroot/uploads
     ports:
       - "9006:9006"
     command: ["./server"]

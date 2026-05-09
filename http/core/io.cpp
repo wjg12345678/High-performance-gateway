@@ -5,7 +5,7 @@
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 
-#include "../../log/log.h"
+#include "../../infra/log/log.h"
 
 using namespace std;
 

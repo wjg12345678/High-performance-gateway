@@ -239,7 +239,7 @@ for c in $CONCURRENCY_SET; do
     run_case "login" "POST" "$BASE_URL/api/login" "$c" "$ROOT_DIR/test_pressure/login.lua" "48" "1"
     run_case "private_ping" "GET" "$BASE_URL/api/private/ping" "$c" "$ROOT_DIR/test_pressure/private_ping.lua" "0" "1"
     run_case "private_files" "GET" "$BASE_URL/api/private/files" "$c" "$ROOT_DIR/test_pressure/private_files.lua" "0" "1"
-    run_case "private_upload" "POST" "$BASE_URL/api/private/files" "$c" "$ROOT_DIR/test_pressure/private_upload.lua" "101" "1"
+    run_case "private_upload" "POST" "$BASE_URL/api/private/files" "$c" "$ROOT_DIR/test_pressure/private_upload.lua" "336" "1"
 done
 
 echo "done: $REPORT_DIR/results.csv"

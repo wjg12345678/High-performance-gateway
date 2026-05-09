@@ -11,5 +11,5 @@ services:
     security_opt:
       - seccomp:unconfined
     volumes:
-      - ./root/uploads:/app/root/uploads
+      - ./webroot/uploads:/app/webroot/uploads
       - ./reports/perf:/app/reports/perf

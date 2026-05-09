@@ -155,14 +155,12 @@ SAMPLE_FREQ=199 \
 
 ## 示例火焰图
 
-下面这张图来自仓库内保留的一份 `GET /healthz` 采样预览图，场景是默认的 `4` 线程、`200` 连接、`15s` 压测：
+运行采样脚本后，结果默认生成到 `reports/perf/<timestamp>/`。仓库不再保留历史采样产物，避免把大体积 perf 数据和图片提交进源码树。
 
-- 预览图：[`reports/perf/previews/healthz_flamegraph.png`](../reports/perf/previews/healthz_flamegraph.png)
-- 交互式 SVG：运行采样脚本后查看 `reports/perf/<timestamp>/flamegraph.svg`
+- 交互式 SVG：`reports/perf/<timestamp>/flamegraph.svg`
+- 原始采样数据：`reports/perf/<timestamp>/perf.data`
 
-GitHub 对带脚本的交互式 SVG 预览支持有限，因此文档内默认展示 PNG；如果要缩放、搜索和点击查看完整栈细节，请直接打开生成目录中的 `flamegraph.svg`。
-
-![Healthz FlameGraph Preview](../reports/perf/previews/healthz_flamegraph.png)
+GitHub 对带脚本的交互式 SVG 预览支持有限；如果要缩放、搜索和点击查看完整栈细节，请直接打开生成目录中的 `flamegraph.svg`。
 
 ## 常见问题
 
