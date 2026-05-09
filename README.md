@@ -1,198 +1,211 @@
 # Atlas WebServer
 
-![C++](https://img.shields.io/badge/C%2B%2B-14%2B-blue)
-![Platform](https://img.shields.io/badge/Platform-Linux%20%2B%20Docker-0f766e)
-![Protocol](https://img.shields.io/badge/Protocol-HTTP%2F1.1%20%2B%20HTTPS-b45309)
-![Database](https://img.shields.io/badge/Database-MySQL%208-2563eb)
-![License](https://img.shields.io/badge/License-MIT-15803d)
+![C++](https://img.shields.io/badge/C%2B%2B-14-blue)
+![Linux](https://img.shields.io/badge/Linux-epoll%20%2B%20pthread-0f766e)
+![HTTP](https://img.shields.io/badge/HTTP-1.1%20%2B%20HTTPS-b45309)
+![MySQL](https://img.shields.io/badge/MySQL-8.x-2563eb)
+![Build](https://img.shields.io/badge/Build-CMake%20%2B%20Docker-7c3aed)
 
-Atlas WebServer 是一个基于 C++、Linux `epoll`、线程池和 MySQL 的 HTTP/1.1 文件服务项目。当前代码已经从传统教学 CGI 示例扩展为一个带账号体系、Bearer Token 会话、私有文件管理、公开分享、操作审计、冒烟测试、parser 单测和 sanitizer CI 的完整工程。
+Atlas WebServer 是一个面向学习、面试展示和小型网盘场景的 C++ Linux WebServer。项目从传统 `epoll + 线程池 + MySQL` 服务器演进为带有账号体系、Bearer Token 会话、文件网盘、公开分享、上传配额、操作审计、数据库迁移、单测、Sanitizer CI 和 benchmark 工具链的完整工程。
 
-## 当前能力
+项目保留底层网络编程能力：非阻塞 socket、ET/LT 触发模式、主从 Reactor、动态线程池、HTTP/1.1 parser、chunked 请求体、multipart 流式上传、OpenSSL TLS、MySQL C API；同时也在持续工程化重构：HTTP 层已拆出 `controller / service / repository / infra` 分层，避免业务逻辑继续堆进 `HttpConnection`。
 
-| 维度 | 代码实现 |
+## 功能概览
+
+| 模块 | 能力 |
 | --- | --- |
-| 网络模型 | 主 Reactor 接收连接，多个 SubReactor 处理连接事件，线程池执行业务任务 |
-| HTTP 协议 | HTTP/1.1、Keep-Alive、静态资源、JSON API、`multipart/form-data`、`Transfer-Encoding: chunked`、可选 HTTPS |
-| 认证会话 | 注册、登录、PBKDF2 密码存储、Bearer Token、单用户新登录吊销旧 Token、当前/全部会话注销 |
-| 文件服务 | 私有文件列表、上传、下载、软删除、恢复、公开/取消公开、公开文件详情和下载 |
-| 上传链路 | Content-Length 请求体和 chunked 请求体；multipart body 支持流式临时文件落盘，避免大文件整体进内存 |
-| 可观测性 | 访问/操作日志、健康检查、benchmark CSV、invalid gate、wrk 原始输出、容器 stats 采样 |
-| 工程化 | Docker Compose、配置文件 + 环境变量覆盖、shell 冒烟测试、C++ parser 单测、ASan/UBSan 构建与 CI |
+| 网络模型 | 主 Reactor accept，多个 SubReactor 处理连接事件，线程池执行业务任务 |
+| HTTP 协议 | HTTP/1.1、Keep-Alive、静态资源、JSON API、HEAD/OPTIONS、可选 HTTPS |
+| 请求体解析 | `application/json`、`x-www-form-urlencoded`、`multipart/form-data`、`Transfer-Encoding: chunked` |
+| 认证会话 | 注册、登录、PBKDF2-HMAC-SHA256 密码存储、Bearer Token、滑动过期、注销当前/全部会话 |
+| 文件网盘 | 目录列表、创建/删除空目录、上传、列表、下载、软删除、恢复、公开/取消公开 |
+| 上传治理 | 单文件大小限制、用户总容量限制、上传前 preflight 校验、临时文件落盘、SHA-256 去重 |
+| 分享能力 | 公开文件列表、公开下载、带 token 的分享链接、访问码、过期时间、下载次数限制 |
+| 审计日志 | 登录、上传、下载、删除、恢复、分享、鉴权失败等操作日志 |
+| 工程化 | CMake、Docker Compose、数据库迁移、单元测试、覆盖率、clang-format、ASan/UBSan CI |
+| 性能工具 | wrk 压测脚本、benchmark CSV、容器 stats 采样、perf flamegraph 文档 |
 
-历史教学路由 `/0`、`/1`、`/2CGISQL.cgi`、`/3CGISQL.cgi`、`/5`、`/6`、`/7` 默认关闭；只有显式开启 `legacy_compat` / `TWS_LEGACY_COMPAT=1` 才恢复。
+历史教学路由 `/0`、`/1`、`/2CGISQL.cgi`、`/3CGISQL.cgi`、`/5`、`/6`、`/7` 默认关闭；只有设置 `legacy_compat=1` 或 `TWS_LEGACY_COMPAT=1` 才启用。
 
 ## 快速开始
 
-推荐用 Docker Compose 启动 Web + MySQL：
+### Docker Compose 推荐路径
 
 ```bash
 docker compose up -d --build
 curl -i http://127.0.0.1:9006/healthz
 ```
 
-默认服务地址：
+默认端口：
 
 | 服务 | 地址 |
 | --- | --- |
 | Web | `http://127.0.0.1:9006` |
 | MySQL | `127.0.0.1:3307` |
 
-面试或评审现场建议直接按 [5 分钟复现指南](docs/quickstart-5min.md) 执行，覆盖注册、登录、上传、下载和真实 chunked 上传。
+Web 容器启动前会执行 `scripts/migrate_db.sh`，自动应用 `migrations/` 下的 SQL。首次启动会初始化 MySQL schema 和默认测试账号。
 
-停止：
+停止服务：
 
 ```bash
 docker compose down
 ```
 
-本地编译需要 Linux、`g++`、`make`、`default-libmysqlclient-dev` / `libmysqlclient`、`libssl-dev` / OpenSSL，并准备可访问的 MySQL 8 数据库：
+清理数据库卷：
 
 ```bash
-make server
-./server
+docker compose down -v
 ```
 
-默认读取 `server.conf`，环境变量会覆盖配置文件。Docker Compose 已默认注入 MySQL 连接参数。
+### 本地构建
 
-## 常用入口
+依赖：Linux、CMake 3.16+、支持 C++14 的 `g++`、OpenSSL dev、MySQL client dev。
 
-| 类型 | 路径 |
-| --- | --- |
-| 首页 | `GET /` |
-| 账号页面 | `GET /login`、`GET /register` |
-| 文件页面 | `GET /files`、`GET /share` |
-| 媒体页面 | `GET /media`、`GET /media/photo`、`GET /media/video` |
-| 健康检查 | `GET /healthz`、`HEAD /healthz` |
-| API | `POST /api/...`、`GET /api/private/...`、`GET /api/files/public...` |
+```bash
+./build.sh
+./build/server
+```
+
+本地直连 MySQL 时，先配置环境变量并执行迁移：
+
+```bash
+TWS_DB_HOST=127.0.0.1 \
+TWS_DB_PORT=3306 \
+TWS_DB_USER=root \
+TWS_DB_PASSWORD=your_password \
+TWS_DB_NAME=qgydb \
+./scripts/migrate_db.sh
+```
+
+## 5 分钟主链路
+
+```bash
+BASE_URL=http://127.0.0.1:9006
+USER_NAME=demo
+PASSWORD=123456
+
+curl -sS -X POST "$BASE_URL/api/register" \
+  -H 'Content-Type: application/json' \
+  -d "{\"username\":\"$USER_NAME\",\"passwd\":\"$PASSWORD\"}"
+
+LOGIN_JSON="$(curl -sS -X POST "$BASE_URL/api/login" \
+  -H 'Content-Type: application/json' \
+  -d "{\"username\":\"$USER_NAME\",\"passwd\":\"$PASSWORD\"}")"
+TOKEN="$(printf '%s' "$LOGIN_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')"
+
+printf 'hello atlas\n' > /tmp/atlas-demo.txt
+FILE_SIZE="$(wc -c < /tmp/atlas-demo.txt | tr -d ' ')"
+
+curl -sS -X POST "$BASE_URL/api/private/files/preflight" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d "{\"size\":$FILE_SIZE,\"folder_id\":0}"
+
+UPLOAD_JSON="$(curl -sS -X POST "$BASE_URL/api/private/files" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Expect:' \
+  -F 'file=@/tmp/atlas-demo.txt;type=text/plain' \
+  -F 'filename=atlas-demo.txt' \
+  -F 'is_public=false')"
+FILE_ID="$(printf '%s' "$UPLOAD_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["file"]["id"])')"
+
+curl -sS "$BASE_URL/api/private/files?limit=10" \
+  -H "Authorization: Bearer $TOKEN" | python3 -m json.tool
+
+curl -i -sS "$BASE_URL/api/private/files/$FILE_ID/download" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+更完整的现场复现步骤见 [docs/quickstart-5min.md](docs/quickstart-5min.md)。
 
 ## API 概览
 
 通用约定：
 
 - Base URL：`http://127.0.0.1:9006`
-- JSON 请求使用 `Content-Type: application/json`
 - 私有接口使用 `Authorization: Bearer <token>`
+- JSON 请求使用 `Content-Type: application/json`
 - 成功响应通常包含 `"code":0`
-- 错误响应通常为 `{"code":<http_status>,"message":"..."}`
-
-主要接口：
+- 错误响应通常为 `{ "code": <http_status>, "message": "..." }`
 
 | 分组 | 接口 |
 | --- | --- |
-| 健康检查 | `GET /healthz` |
-| 调试回显 | `POST /api/echo` |
-| 认证 | `POST /api/register`、`POST /api/login` |
-| 会话 | `GET /api/private/ping`、`POST /api/private/logout` |
+| 健康检查 | `GET /healthz`、`HEAD /healthz` |
+| 调试 | `POST /api/echo` |
+| 认证 | `POST /api/register`、`POST /api/login`、`GET /api/private/ping`、`POST /api/private/logout` |
 | 操作日志 | `GET /api/private/operations`、`DELETE /api/private/operations/:id` |
-| 私有文件 | `GET /api/private/files`、`POST /api/private/files`、`POST /api/private/files/preflight`、`GET /api/private/files/:id/download` |
-| 文件管理 | `DELETE /api/private/files/:id`、`POST /api/private/files/:id/restore`、`POST /api/private/files/:id/visibility` |
-| 分享链接 | `POST /api/private/files/:id/share`、`GET /api/share/:token`、`GET /api/share/:token/download` |
+| 私有文件 | `GET /api/private/files`、`POST /api/private/files`、`POST /api/private/files/preflight` |
+| 文件管理 | `GET /api/private/files/:id/download`、`DELETE /api/private/files/:id`、`POST /api/private/files/:id/restore`、`POST /api/private/files/:id/visibility` |
+| 网盘目录 | `GET /api/drive/items?folder_id=0`、`POST /api/drive/folders`、`DELETE /api/drive/folders/:id` |
+| 网盘上传 | `POST /api/drive/files/preflight`、`POST /api/drive/files/upload`、`GET /api/drive/files/:id/download`、`DELETE /api/drive/files/:id` |
 | 公开文件 | `GET /api/files/public`、`GET /api/files/public/:id`、`GET /api/files/public/:id/download` |
+| 分享链接 | `POST /api/private/files/:id/share`、`GET /api/share/:token`、`GET /api/share/:token/download` |
 
-完整字段和响应示例见 [docs/api.md](docs/api.md)。
+详细字段、响应示例和错误码见 [docs/api.md](docs/api.md)。文件模块边界见 [docs/file-module.md](docs/file-module.md)。
 
-### 认证示例
-
-```bash
-curl -sS -X POST http://127.0.0.1:9006/api/register \
-  -H 'Content-Type: application/json' \
-  -d '{"username":"demo","passwd":"123456"}'
-
-LOGIN_RESPONSE="$(curl -sS -X POST http://127.0.0.1:9006/api/login \
-  -H 'Content-Type: application/json' \
-  -d '{"username":"demo","passwd":"123456"}')"
-TOKEN="$(printf '%s\n' "$LOGIN_RESPONSE" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')"
-
-curl -sS http://127.0.0.1:9006/api/private/ping \
-  -H "Authorization: Bearer $TOKEN"
-```
-
-### 文件上传示例
-
-主上传路径是 `multipart/form-data`：
-
-```bash
-curl -sS -X POST http://127.0.0.1:9006/api/private/files/preflight \
-  -H "Authorization: Bearer $TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{"size":12345,"folder_id":0}'
-
-curl -sS -X POST http://127.0.0.1:9006/api/private/files \
-  -H "Authorization: Bearer $TOKEN" \
-  -H 'Expect:' \
-  -F 'file=@README.md;type=text/markdown' \
-  -F 'filename=README.md' \
-  -F 'is_public=false'
-```
-
-HTTP parser 也支持 `Transfer-Encoding: chunked`。仓库里的 `scripts/test_chunked_api.sh` 使用 raw socket 发送真实 chunked 请求，覆盖 `/api/echo` 和 multipart 文件上传。
-
-## 架构
+## 架构分层
 
 ```mermaid
 flowchart LR
-    Client[Client]
-    Main[Main Reactor]
-    Sub[SubReactors]
-    Pool[Thread Pool]
-    HTTP[HTTP Core]
-    API[Auth / API]
-    Files[File Service]
-    DB[(MySQL)]
-    FS[(webroot/uploads)]
-    Log[Log]
-
-    Client --> Main --> Sub --> Pool --> HTTP
-    HTTP --> API --> DB
-    HTTP --> Files --> DB
-    Files --> FS
-    HTTP --> Log
+    Client[Browser / curl / wrk] --> HTTP[HttpConnection]
+    HTTP --> Router[Router]
+    Router --> Controller[Controller]
+    Controller --> Service[Service]
+    Service --> Repo[Repository]
+    Repo --> MySQL[(MySQL)]
+    Service --> Storage[infra/storage]
+    Storage --> Disk[(webroot/uploads)]
 ```
 
-核心流程：
+| 层级 | 目录 | 职责 |
+| --- | --- | --- |
+| 启动层 | `app/` | 配置解析、daemon supervisor、WebServer 初始化、Reactor 编排 |
+| HTTP Core | `http/core/` | socket IO、HTTP parser、chunked parser、响应写回、连接生命周期 |
+| 路由层 | `http/router/` | 静态路由表、API 分发、页面路由、静态资源解析 |
+| Controller | `http/controllers/` | 认证、文件、操作日志等 HTTP 入口，负责参数校验和响应适配 |
+| HTTP 辅助 | `http/api/`、`http/files/` | 保留兼容入口、multipart 解析、文件下载响应适配 |
+| Service | `service/` | 认证、会话、文件、目录、分享、配额等业务编排 |
+| Repository | `repo/mysql/` | SQL 访问、结果映射、schema 可用性检查 |
+| Infra | `infra/` | MySQL 连接池、存储、线程池、定时器、日志、锁封装 |
+| Webroot | `webroot/` | 前端页面、静态资源、上传目录 |
 
-1. `app/main.cpp` 读取 `server.conf`，再应用环境变量和命令行覆盖。
-2. `app/webserver.cpp` 初始化日志、TLS、MySQL 连接池、线程池和监听 socket。
-3. 主 Reactor 接收连接，按轮询分配到 SubReactor。
-4. `http/core/io.cpp` 负责 socket / TLS 读写与 ring buffer。
-5. `http/core/parser.cpp` 解析请求行、Header、Content-Length body 和 chunked body。
-6. `http/router/router.cpp` 分发静态资源、认证接口、文件接口和公开文件接口。
-7. `http/api/`、`http/files/` 负责 HTTP 适配，`service/auth/`、`service/files/` 负责编排业务，`infra/storage/` 负责磁盘路径、临时文件、落盘、移动和 SHA-256。
+当前已抽出的 controller：
 
-更多细节见 [docs/architecture.md](docs/architecture.md) 和 [docs/request-sequence.md](docs/request-sequence.md)。
+- `AuthController`：登录、注册、登出、`ping`
+- `FileController`：文件、网盘目录、公开文件、分享链接
+- `OperationController`：操作日志列表和删除
 
-## 目录结构
+`HttpConnection` 仍保留底层连接状态和少量兼容委托入口。下一步可引入轻量 `HttpRequest` / `HttpResponse` 适配对象，逐步移除 controller 对 `HttpConnection` 的 `friend` 访问。
 
-```text
-.
-|-- app/                         # 程序入口、配置解析、WebServer/Reactor 启动层
-|-- http/
-|   |-- core/                    # HTTP connection、parser、IO、response、runtime
-|   |-- router/                  # 路由表、静态资源分发
-|   |-- api/                     # 认证、会话、操作日志 HTTP 适配
-|   `-- files/                   # 文件上传解析、下载响应等 HTTP 适配
-|-- service/                     # 认证、文件等业务编排
-|-- repo/mysql/                  # DAO / Repository，集中管理 SQL 与结果映射
-|-- infra/
-|   |-- db/                      # MySQL 连接池
-|   |-- storage/                 # 文件系统存储封装：路径、目录、落盘、移动、哈希
-|   |-- threadpool/              # 动态线程池与任务队列
-|   |-- timer/                   # 连接超时管理
-|   |-- log/                     # 同步/异步日志
-|   `-- lock/                    # 线程同步封装
-|-- webroot/                     # 前端页面、静态资源、上传目录
-|-- scripts/                     # 冒烟测试、API 测试、benchmark、perf 脚本
-|-- tests/                       # C++ parser 单测
-|-- docs/                        # 架构、API、benchmark 和 perf 文档
-|-- docker/                      # Docker 辅助文件与 MySQL 初始化 SQL
-|-- deploy/                      # Nginx 等部署示例
-`-- .github/workflows/           # CI：parser + ASan/UBSan + chunked API 集成
-```
+## 文件与上传设计
+
+- 主上传路径使用 `multipart/form-data`，文件字段名默认 `file`。
+- multipart 请求体会先流式写入 `webroot/uploads/.tmp/`，再抽取文件 part，避免大文件整体常驻内存。
+- 单文件上限由 `upload_max_bytes` / `TWS_UPLOAD_MAX_BYTES` 控制，默认 `100 MiB`。
+- 单用户总容量由 `user_storage_quota_bytes` / `TWS_USER_STORAGE_QUOTA_BYTES` 控制，默认 `1 GiB`，`0` 表示不限制。
+- 前端和 API 可先调用 `/api/private/files/preflight` 或 `/api/drive/files/preflight` 做上传前校验。
+- 服务端落库前会再次校验配额，防止绕过前端预检。
+- 文件内容计算 `SHA-256`，相同内容复用 `physical_files` 物理记录，`files` 表保存用户视角元数据。
+- 删除为软删除，进入回收站；恢复时如果同名冲突，会按 `demo (1).txt` 规则重命名。
+
+如果前面有 Nginx 反向代理，`client_max_body_size` 应不小于应用的 `upload_max_bytes`。示例见 [deploy/nginx/atlas-webserver.conf.example](deploy/nginx/atlas-webserver.conf.example)。
+
+## 数据库迁移
+
+项目使用版本化 SQL 管理 schema：
+
+| 文件 | 说明 |
+| --- | --- |
+| `migrations/001_init_schema.sql` | 初始化完整 schema |
+| `migrations/002_upgrade_existing_drive_dedup.sql` | 升级旧文件表到目录 + 去重模型 |
+| `docker/mysql/init.sql` | Docker 新数据卷初始化 SQL |
+| `scripts/migrate_db.sh` | 本地/容器统一迁移入口 |
+
+迁移记录写入 `schema_migrations`。应用启动阶段只检查 schema 是否可用，不再在 `WebServer` 启动流程里动态拼接 `CREATE TABLE` / `ALTER TABLE`。详细说明见 [docs/database-migrations.md](docs/database-migrations.md)。
 
 ## 配置
 
-默认配置在 `server.conf`。环境变量优先级高于配置文件，命令行参数可覆盖部分基础项，随后环境变量会再次生效。
+默认配置文件为 `server.conf`。环境变量优先级高于配置文件；生产环境建议使用环境变量注入数据库密码和证书路径。
 
 | 配置项 | 环境变量 | 默认值 | 说明 |
 | --- | --- | --- | --- |
@@ -202,102 +215,109 @@ flowchart LR
 | `trig_mode` | `TWS_TRIG_MODE` | `3` | epoll 模式，默认 listen ET + conn ET |
 | `opt_linger` | `TWS_OPT_LINGER` | `0` | socket linger 策略 |
 | `sql_num` | `TWS_SQL_NUM` | `8` | MySQL 连接池大小 |
-| `thread_num` | `TWS_THREAD_NUM` | `8` | 基础工作线程数 / SubReactor 数 |
-| `threadpool_max_threads` | `TWS_THREADPOOL_MAX_THREADS` | `8` | 线程池最大线程数 |
+| `thread_num` | `TWS_THREAD_NUM` | `8` | SubReactor / 基础工作线程数 |
+| `threadpool_max_threads` | `TWS_THREADPOOL_MAX_THREADS` | `8` | 动态线程池最大线程数 |
 | `threadpool_idle_timeout` | `TWS_THREADPOOL_IDLE_TIMEOUT` | `30` | 动态线程空闲回收秒数 |
-| `threadpool_queue_mode` | `TWS_THREADPOOL_QUEUE_MODE` | `mutex` | 任务队列实现，支持 `mutex` / `lockfree` |
+| `threadpool_queue_mode` | `TWS_THREADPOOL_QUEUE_MODE` | `mutex` | 队列实现，支持 `mutex` / `lockfree` |
 | `mysql_idle_timeout` | `TWS_MYSQL_IDLE_TIMEOUT` | `60` | MySQL 连接空闲检查 |
-| `upload_max_bytes` | `TWS_UPLOAD_MAX_BYTES` | `104857600` | 单文件上传上限，默认 100 MiB |
-| `user_storage_quota_bytes` | `TWS_USER_STORAGE_QUOTA_BYTES` | `1073741824` | 单用户总容量上限，默认 1 GiB，`0` 表示不限制 |
+| `upload_max_bytes` | `TWS_UPLOAD_MAX_BYTES` | `104857600` | 单文件上传上限 |
+| `user_storage_quota_bytes` | `TWS_USER_STORAGE_QUOTA_BYTES` | `1073741824` | 单用户总容量上限，`0` 不限制 |
 | `conn_timeout` | `TWS_CONN_TIMEOUT` | `15` | HTTP 连接空闲超时 |
-| `close_log` | `TWS_CLOSE_LOG` | `0` | `1` 关闭日志 |
 | `daemon_mode` | `TWS_DAEMON_MODE` | `0` | daemon supervisor 模式 |
 | `pid_file` | `TWS_PID_FILE` | `./atlas-webserver.pid` | daemon pid 文件 |
-| `https_enable` | `TWS_HTTPS_ENABLE` | `0` | 开启 HTTPS |
+| `https_enable` | `TWS_HTTPS_ENABLE` | `0` | 是否开启 HTTPS |
 | `https_cert_file` | `TWS_HTTPS_CERT_FILE` | `./certs/server.crt` | TLS 证书 |
 | `https_key_file` | `TWS_HTTPS_KEY_FILE` | `./certs/server.key` | TLS 私钥 |
-| `legacy_compat` | `TWS_LEGACY_COMPAT` | `0` | 开启教学遗留路由和兼容上传 |
+| `legacy_compat` | `TWS_LEGACY_COMPAT` | `0` | 是否启用教学遗留路由 |
 | `db_host` | `TWS_DB_HOST` | `127.0.0.1` | MySQL host |
 | `db_port` | `TWS_DB_PORT` | `3306` | MySQL port |
 | `db_user` | `TWS_DB_USER` | `root` | MySQL 用户 |
-| `db_password` | `TWS_DB_PASSWORD` | 空 | MySQL 密码，生产环境建议只用环境变量 |
+| `db_password` | `TWS_DB_PASSWORD` | 空 | MySQL 密码 |
 | `db_name` | `TWS_DB_NAME` | `qgydb` | MySQL 数据库 |
 
-如果前面使用 Nginx 反向代理，`client_max_body_size` 应不小于 `upload_max_bytes` / `TWS_UPLOAD_MAX_BYTES`。示例见 [deploy/nginx/atlas-webserver.conf.example](deploy/nginx/atlas-webserver.conf.example)。
-
-## 构建与测试
+## 构建、测试与质量检查
 
 | 命令 | 说明 |
 | --- | --- |
-| `make server` | 构建普通服务端二进制 |
-| `make server-sanitize` | 构建 ASan/UBSan 服务端二进制 |
-| `make test-parser` | 运行 C++ parser 单测 |
-| `make test-parser-sanitize` | 在 ASan/UBSan 下运行 parser 单测 |
-| `scripts/run_smoke_suite.sh` | 运行认证、私有接口、文件、chunked API 冒烟测试 |
-| `scripts/test_chunked_api.sh` | 发送真实 chunked 请求，验证 echo 和 multipart 上传 |
-| `scripts/run_benchmark_suite.sh` | 执行 wrk benchmark 并生成 CSV / gate 文件 |
-| `docs/quickstart-5min.md` | 5 分钟复现注册、登录、上传、下载和 chunked 上传 |
-| `make clean` | 清理构建产物 |
+| `./build.sh` | CMake Release/Debug 构建，输出 `build/server` |
+| `cmake -S . -B build && cmake --build build -j` | 手动 CMake 构建 |
+| `scripts/run_unit_tests.sh` | CTest 单元测试入口 |
+| `scripts/run_coverage.sh` | parser 覆盖率 smoke；安装 `gcovr` 时生成 HTML |
+| `scripts/format_check.sh check` | `clang-format` 检查 |
+| `scripts/format_check.sh fix` | 自动格式化 C++ 代码 |
+| `scripts/migrate_db.sh` | 应用数据库迁移 |
+| `scripts/run_smoke_suite.sh` | 认证、私有 API、文件、分享、chunked API 冒烟测试 |
+| `scripts/test_chunked_api.sh` | raw socket 发送真实 chunked 请求 |
+| `scripts/run_benchmark_suite.sh` | wrk benchmark、CSV、gate 和容器 stats |
+| `scripts/profile_perf_flamegraph.sh` | perf + FlameGraph 采样入口 |
 
-CI 工作流位于 `.github/workflows/ci.yml`，会执行：
+CI 位于 `.github/workflows/ci.yml`，覆盖 CMake 构建、CTest、coverage smoke、格式检查、ASan/UBSan parser 测试、数据库迁移和 chunked API 集成测试。
 
-1. `make test-parser-sanitize`
-2. `make server-sanitize`
-3. 初始化 MySQL schema
-4. 启动 ASan/UBSan server
-5. 运行 `scripts/test_chunked_api.sh`
-6. 检查 server 日志中是否出现 AddressSanitizer / UBSan 错误
+## 目录结构
 
-## Benchmark 与发布口径
+```text
+.
+|-- app/                         # main、配置、WebServer、Reactor 启动层
+|-- http/
+|   |-- core/                    # HttpConnection、parser、IO、response、runtime
+|   |-- router/                  # API/页面/静态资源路由
+|   |-- controllers/             # Auth/File/Operation controller
+|   |-- api/                     # 兼容入口、会话中间件、操作日志 helper
+|   `-- files/                   # multipart parser、文件下载响应、文件辅助函数
+|-- service/                     # auth/files 业务服务
+|-- repo/mysql/                  # Repository / DAO
+|-- infra/                       # db、storage、threadpool、timer、log、lock
+|-- webroot/                     # 页面、样式、媒体资源、uploads
+|-- migrations/                  # 版本化 SQL 迁移
+|-- scripts/                     # 测试、迁移、benchmark、coverage、format 脚本
+|-- tests/                       # C++ 单元测试
+|-- docs/                        # 架构、API、迁移、性能和复现文档
+|-- docker/                      # Docker 辅助文件与 MySQL 初始化 SQL
+|-- deploy/                      # Nginx 等部署示例
+`-- .github/workflows/           # CI
+```
 
-仓库不在 README 发布未经 gate 校验的 headline 性能数字。`scripts/run_benchmark_suite.sh` 会为每个 case 生成：
+更详细的目录说明见 [docs/project-structure.md](docs/project-structure.md)。
+
+## Benchmark 与性能说明
+
+仓库保留 benchmark 工具和历史报告，但 README 不直接宣传未经 gate 校验的 headline 数字。运行：
+
+```bash
+scripts/run_benchmark_suite.sh
+```
+
+输出包括：
 
 - `*.wrk.txt`：wrk 原始输出
 - `*.stats.csv`：Web / MySQL 容器 CPU、内存采样
-- `*.gate.txt`：有效性判定明细
-- `results.csv`：结构化结果，包含 `valid` 和 `invalid_reason`
+- `benchmark.csv`：汇总指标
+- `benchmark-trusted.csv`：通过 invalid gate 的可信样本
 
-一个 benchmark case 只有同时满足以下条件才视为有效：
+详细方法和解释见 [docs/benchmark.md](docs/benchmark.md)，火焰图流程见 [docs/perf-flamegraph.md](docs/perf-flamegraph.md)。
 
-- wrk `Socket errors` 总数为 `0`
-- Web / MySQL 容器 `RestartCount` 压测前后不增长
-- 压测窗口内 Web 日志没有 `server received SIGSEGV`
+## 面试讲解要点
 
-当前仓库将 `errors=none` / `Socket errors=0` 的结果作为可信 headline；详见 [docs/benchmark.md](docs/benchmark.md) 和 [docs/benchmark-trusted.csv](docs/benchmark-trusted.csv)。历史矩阵 [docs/benchmark.csv](docs/benchmark.csv) 与图表只用于开发机观察和瓶颈定位，不作为正式发布基准。
-
-## 数据与存储
-
-Docker 初始化 SQL 位于 `docker/mysql/init.sql`，主要表包括：
-
-| 表 | 说明 |
-| --- | --- |
-| `user` | 用户与密码哈希 |
-| `user_sessions` | Bearer Token 会话 |
-| `files` | 文件元数据、公开状态、软删除状态、SHA-256 |
-| `operation_logs` | 登录、上传、删除等操作记录 |
-
-上传文件默认存储在 `webroot/uploads/`，该目录在 Docker Compose 中挂载到宿主机。
-
-## 安全与限制
-
-- 默认关闭 HTTPS；生产环境需配置 `https_enable=1`、证书和私钥。
-- 数据库密码、Token 相关配置应通过环境变量注入，不建议写入仓库配置文件。
-- 默认主上传路径只接受 `multipart/form-data`；兼容 JSON/base64 上传仅在 `legacy_compat=1` 时启用。
-- 当前 parser 支持 chunked request body，但响应仍使用 `Content-Length`。
-- 默认单文件上传上限为 100 MiB，可用 `TWS_UPLOAD_MAX_BYTES` 调整。
-- 默认单用户总容量上限为 1 GiB，可用 `TWS_USER_STORAGE_QUOTA_BYTES` 调整，软删除文件仍计入容量。
+- 底层能力：`epoll`、非阻塞 IO、Reactor、线程池、HTTP parser、chunked/multipart、OpenSSL、MySQL C API。
+- 工程化能力：CMake、Docker、CI、Sanitizer、coverage、数据库迁移、benchmark gate。
+- 安全与可靠性：PBKDF2 密码、Bearer Token 会话、路径/文件名清洗、上传配额、软删除、操作审计。
+- 分层重构：`HttpConnection` 逐步收敛为连接和协议层；业务入口已拆到 `AuthController`、`FileController`、`OperationController`；业务编排在 `service/`，SQL 在 `repo/mysql/`。
+- 后续改进：引入 `HttpRequest` / `HttpResponse` 适配层移除 controller 的 `friend` 依赖；对 fd、`FILE*`、`MYSQL_RES*`、`SSL*` 做更多 RAII 封装；补齐 controller/service 级单元测试。
 
 ## 文档索引
 
 | 文档 | 内容 |
 | --- | --- |
-| [docs/api.md](docs/api.md) | API 字段、参数和响应示例 |
-| [docs/architecture.md](docs/architecture.md) | 架构说明 |
-| [docs/request-sequence.md](docs/request-sequence.md) | 请求处理时序 |
+| [docs/quickstart-5min.md](docs/quickstart-5min.md) | 5 分钟主链路复现 |
+| [docs/api.md](docs/api.md) | API 字段和响应示例 |
+| [docs/architecture.md](docs/architecture.md) | 架构设计 |
+| [docs/request-sequence.md](docs/request-sequence.md) | 请求时序 |
 | [docs/file-module.md](docs/file-module.md) | 文件模块设计 |
-| [docs/benchmark.md](docs/benchmark.md) | benchmark 报告和发布口径 |
-| [docs/perf-flamegraph.md](docs/perf-flamegraph.md) | perf / FlameGraph 指南 |
+| [docs/database-migrations.md](docs/database-migrations.md) | 数据库迁移 |
+| [docs/project-structure.md](docs/project-structure.md) | 目录结构 |
+| [docs/benchmark.md](docs/benchmark.md) | benchmark 方法 |
+| [docs/perf-flamegraph.md](docs/perf-flamegraph.md) | perf flamegraph |
 
 ## License
 
-MIT License. See [LICENSE](LICENSE).
+本项目使用 MIT License，详见 [LICENSE](LICENSE)。

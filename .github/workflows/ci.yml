@@ -5,6 +5,34 @@ on:
   pull_request:
 
 jobs:
+  build-and-unit:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build default-libmysqlclient-dev libssl-dev clang-format gcovr
+
+      - name: CMake configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
+
+      - name: CMake build server
+        run: cmake --build build --target server --parallel
+
+      - name: CTest unit tests
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Coverage smoke
+        run: scripts/run_coverage.sh
+
+      - name: Format check advisory
+        continue-on-error: true
+        run: scripts/format_check.sh check
+
   sanitizer-and-api:
     runs-on: ubuntu-24.04
 
@@ -29,13 +57,13 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential default-libmysqlclient-dev libssl-dev mysql-client curl python3
+          sudo apt-get install -y build-essential cmake ninja-build default-libmysqlclient-dev libssl-dev mysql-client curl python3
 
-      - name: Build and run parser tests under sanitizers
-        run: make test-parser-sanitize
-
-      - name: Build server under ASan/UBSan
-        run: make server-sanitize
+      - name: Build sanitizer targets with CMake
+        run: |
+          cmake -S . -B build-sanitize -G Ninja -DCMAKE_BUILD_TYPE=Debug -DATLAS_ENABLE_SANITIZERS=ON
+          cmake --build build-sanitize --target server parser-chunked-test --parallel
+          ASAN_OPTIONS=detect_leaks=0:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 ctest --test-dir build-sanitize --output-on-failure
 
       - name: Initialize MySQL schema
         run: |
@@ -62,7 +90,7 @@ jobs:
           TWS_THREADPOOL_MAX_THREADS=2 \
           TWS_SQL_NUM=2 \
           LD_PRELOAD="$(gcc -print-file-name=libasan.so)" \
-          ./server-sanitize > /tmp/atlas-server.log 2>&1 &
+          ./build-sanitize/server > /tmp/atlas-server.log 2>&1 &
           echo $! > /tmp/atlas-server.pid
           for i in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:9006/healthz >/dev/null; then

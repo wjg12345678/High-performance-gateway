@@ -4,7 +4,7 @@ set -eu
 
 ROOT_DIR=$(cd "$(dirname "$0")" && pwd)
 CONFIG_FILE=${CONFIG_FILE:-"$ROOT_DIR/server.conf"}
-SERVER_BIN=${SERVER_BIN:-"$ROOT_DIR/server"}
+SERVER_BIN=${SERVER_BIN:-"$ROOT_DIR/build/server"}
 
 read_config_value() {
     local key="$1"

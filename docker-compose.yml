@@ -49,7 +49,7 @@ services:
       - ./webroot/uploads:/app/webroot/uploads
     ports:
       - "9006:9006"
-    command: ["./server"]
+    command: ["sh", "-c", "./scripts/migrate_db.sh && ./build/server"]
 
 volumes:
   mysql-data:

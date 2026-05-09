@@ -6,20 +6,41 @@
 
 namespace
 {
-bool execute_optional_migration(MYSQL *mysql, const char *sql)
+bool query_returns_row(MYSQL *mysql, const char *sql)
 {
-    if (mysql == nullptr || sql == nullptr)
+    if (mysql == nullptr || sql == nullptr || mysql_query(mysql, sql) != 0)
     {
         return false;
     }
 
-    if (mysql_query(mysql, sql) == 0)
+    MYSQL_RES *result = mysql_store_result(mysql);
+    if (result == nullptr)
     {
-        return true;
+        return false;
     }
 
-    const unsigned int err = mysql_errno(mysql);
-    return err == 1060 || err == 1061 || err == 1091;
+    const bool has_row = mysql_fetch_row(result) != nullptr;
+    mysql_free_result(result);
+    return has_row;
+}
+
+bool schema_table_exists(MYSQL *mysql, const char *table_name)
+{
+    char sql[256];
+    snprintf(sql, sizeof(sql),
+             "SELECT 1 FROM information_schema.TABLES "
+             "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='%s' LIMIT 1",
+             table_name);
+    return query_returns_row(mysql, sql);
+}
+
+bool schema_migration_applied(MYSQL *mysql, const char *version)
+{
+    char sql[256];
+    snprintf(sql, sizeof(sql),
+             "SELECT 1 FROM schema_migrations WHERE version='%s' LIMIT 1",
+             version);
+    return query_returns_row(mysql, sql);
 }
 }
 
@@ -186,25 +207,21 @@ void WebServer::sql_pool()
     connectionRAII mysqlcon(&mysql, m_connPool);
     if (mysql != nullptr)
     {
-        execute_optional_migration(mysql, "CREATE TABLE IF NOT EXISTS folders (id BIGINT NOT NULL AUTO_INCREMENT, owner_username VARCHAR(50) NOT NULL, parent_id BIGINT NOT NULL DEFAULT 0, name VARCHAR(128) NOT NULL, deleted_marker BIGINT NOT NULL DEFAULT 0, deleted_at TIMESTAMP NULL DEFAULT NULL, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (id), UNIQUE KEY uq_owner_parent_name_active (owner_username, parent_id, name, deleted_marker), KEY idx_owner_parent_deleted (owner_username, parent_id, deleted_at, id), KEY idx_owner_parent_name_deleted (owner_username, parent_id, name, deleted_at)) ENGINE=InnoDB");
-        execute_optional_migration(mysql, "ALTER TABLE folders ADD COLUMN deleted_marker BIGINT NOT NULL DEFAULT 0");
-        execute_optional_migration(mysql, "ALTER TABLE folders ADD UNIQUE KEY uq_owner_parent_name_active (owner_username, parent_id, name, deleted_marker)");
-        execute_optional_migration(mysql, "ALTER TABLE folders ADD KEY idx_owner_parent_deleted (owner_username, parent_id, deleted_at, id)");
-        execute_optional_migration(mysql, "ALTER TABLE folders ADD KEY idx_owner_parent_name_deleted (owner_username, parent_id, name, deleted_at)");
-        execute_optional_migration(mysql, "CREATE TABLE IF NOT EXISTS physical_files (id BIGINT NOT NULL AUTO_INCREMENT, sha256 CHAR(64) NOT NULL, stored_name VARCHAR(128) NOT NULL, file_size BIGINT NOT NULL DEFAULT 0, ref_count BIGINT NOT NULL DEFAULT 0, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (id), UNIQUE KEY uq_physical_sha256 (sha256), UNIQUE KEY uq_physical_stored_name (stored_name)) ENGINE=InnoDB");
-        execute_optional_migration(mysql, "ALTER TABLE files ADD COLUMN folder_id BIGINT NOT NULL DEFAULT 0");
-        execute_optional_migration(mysql, "ALTER TABLE files ADD COLUMN physical_id BIGINT NOT NULL DEFAULT 0");
-        execute_optional_migration(mysql, "ALTER TABLE files ADD COLUMN is_public TINYINT(1) NOT NULL DEFAULT 0");
-        execute_optional_migration(mysql, "ALTER TABLE files ADD COLUMN content_sha256 CHAR(64) NOT NULL DEFAULT ''");
-        execute_optional_migration(mysql, "ALTER TABLE files ADD COLUMN deleted_at TIMESTAMP NULL DEFAULT NULL");
-        execute_optional_migration(mysql, "ALTER TABLE files ADD KEY idx_owner_deleted_id (owner_username, deleted_at, id)");
-        execute_optional_migration(mysql, "ALTER TABLE files ADD KEY idx_owner_folder_deleted_name (owner_username, folder_id, deleted_at, original_name)");
-        execute_optional_migration(mysql, "ALTER TABLE files ADD KEY idx_physical_id (physical_id)");
-        execute_optional_migration(mysql, "ALTER TABLE files ADD KEY idx_public_deleted_id (is_public, deleted_at, id)");
-        execute_optional_migration(mysql, "ALTER TABLE files ADD KEY idx_owner_name_deleted (owner_username, original_name, deleted_at)");
-        execute_optional_migration(mysql, "ALTER TABLE files DROP INDEX idx_owner_username");
-        execute_optional_migration(mysql, "INSERT IGNORE INTO physical_files(sha256, stored_name, file_size, ref_count) SELECT content_sha256, MIN(stored_name), MAX(file_size), SUM(CASE WHEN deleted_at IS NULL THEN 1 ELSE 0 END) FROM files WHERE content_sha256<>'' GROUP BY content_sha256");
-        execute_optional_migration(mysql, "UPDATE files f JOIN physical_files p ON f.content_sha256=p.sha256 SET f.physical_id=p.id, f.stored_name=p.stored_name WHERE f.physical_id=0 AND f.content_sha256<>''");
+        const char *required_tables[] = {
+            "user", "user_sessions", "files", "folders", "physical_files", "schema_migrations"};
+        for (size_t i = 0; i < sizeof(required_tables) / sizeof(required_tables[0]); ++i)
+        {
+            if (!schema_table_exists(mysql, required_tables[i]))
+            {
+                LOG_ERROR("database schema is not migrated; missing table=%s, run scripts/migrate_db.sh", required_tables[i]);
+                break;
+            }
+        }
+
+        if (!schema_migration_applied(mysql, "002_upgrade_existing_drive_dedup"))
+        {
+            LOG_ERROR("database schema migration 002_upgrade_existing_drive_dedup is not applied; run scripts/migrate_db.sh");
+        }
     }
     users[0].initmysql_result(m_connPool);
 }

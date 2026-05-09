@@ -26,3 +26,15 @@
 - 新 SQL 优先放在 `repo/mysql/`，HTTP 层不要拼接业务 SQL。
 - 新基础组件放进 `infra/` 的对应子目录。
 - 运行产物放在 `.gitignore` 已忽略的位置，例如 `reports/`、`ServerLog/`、`webroot/uploads/`。
+
+## 工程化入口
+
+| 入口 | 用途 |
+| --- | --- |
+| `CMakeLists.txt` | 现代 CMake 构建、CTest、sanitizer 和 coverage 配置 |
+| `.clang-format` | C++ 格式化规则 |
+| `.editorconfig` | 编辑器基础换行、缩进和空白规则 |
+| `.github/workflows/ci.yml` | CMake 构建、CTest、coverage smoke、advisory 格式检查、sanitizer API 集成测试 |
+| `scripts/run_unit_tests.sh` | 本地统一单元测试入口 |
+| `scripts/run_coverage.sh` | 本地覆盖率入口 |
+| `scripts/format_check.sh` | 本地格式检查 / 自动格式化入口 |

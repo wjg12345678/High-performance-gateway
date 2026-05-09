@@ -1,5 +1,3 @@
-USE qgydb;
-
 CREATE TABLE IF NOT EXISTS user (
     username VARCHAR(50) NOT NULL,
     passwd VARCHAR(128) NOT NULL,
@@ -104,5 +102,3 @@ WHERE NOT EXISTS (
     SELECT 1 FROM user WHERE username = 'name'
 );
 
-INSERT IGNORE INTO schema_migrations(version)
-VALUES ('001_init_schema'), ('002_upgrade_existing_drive_dedup');

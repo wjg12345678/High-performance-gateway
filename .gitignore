@@ -30,3 +30,6 @@ webroot/uploads/*
 !webroot/uploads/.gitkeep
 
 *ServerLog
+build/
+build-sanitize/
+build-coverage/

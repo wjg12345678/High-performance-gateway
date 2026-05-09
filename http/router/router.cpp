@@ -1,4 +1,5 @@
 #include "../core/connection.h"
+#include "../controllers/auth_controller.h"
 
 #include <cstring>
 #include <strings.h>
@@ -161,10 +162,7 @@ HttpConnection::HTTP_CODE HttpConnection::route_api_echo()
 
 HttpConnection::HTTP_CODE HttpConnection::route_api_private_ping()
 {
-    string body = string("{\"code\":0,\"message\":\"pong\",\"user\":\"") +
-                  json_escape(m_current_user) + "\"}";
-    set_memory_response(200, "OK", body, "application/json");
-    return MEMORY_REQUEST;
+    return http_controllers::AuthController::ping(*this);
 }
 
 HttpConnection::HTTP_CODE HttpConnection::route_healthz()
@@ -175,12 +173,12 @@ HttpConnection::HTTP_CODE HttpConnection::route_healthz()
 
 HttpConnection::HTTP_CODE HttpConnection::route_page_login()
 {
-    return handle_auth_request(false, false);
+    return http_controllers::AuthController::login(*this, false);
 }
 
 HttpConnection::HTTP_CODE HttpConnection::route_page_register()
 {
-    return handle_auth_request(true, false);
+    return http_controllers::AuthController::register_user(*this, false);
 }
 
 HttpConnection::HTTP_CODE HttpConnection::route_register_page()

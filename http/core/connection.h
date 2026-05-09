@@ -26,6 +26,13 @@ namespace service_files
 struct UploadPayload;
 }
 
+namespace http_controllers
+{
+class AuthController;
+class FileController;
+class OperationController;
+}
+
 struct ssl_st;
 using SSL = ssl_st;
 struct ssl_ctx_st;
@@ -39,6 +46,10 @@ using std::vector;
 
 class HttpConnection
 {
+    friend class http_controllers::AuthController;
+    friend class http_controllers::FileController;
+    friend class http_controllers::OperationController;
+
 public:
     static const int FILENAME_LEN = 200;
     static const int READ_BUFFER_INITIAL_SIZE = 16384;
@@ -251,7 +262,6 @@ private:
     HTTP_CODE handle_operation_delete(const char *path);
     bool open_managed_file(const string &path, const string &content_type, const string &download_name);
     bool parse_managed_upload_payload(service_files::UploadPayload &payload, int &status, const char *&title, string &message);
-    string build_operation_list_json(const vector<repo_mysql::OperationLogItem> &operations) const;
     bool begin_streamed_body_capture();
     bool append_streamed_body_chunk(const char *data, size_t len);
     void reset_streamed_body_buffer();

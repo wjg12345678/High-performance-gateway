@@ -180,7 +180,7 @@ Docker Desktop 常见的 Linux 内核版本带有 `linuxkit` 后缀。Ubuntu 自
 
 ### 3. 火焰图没有业务符号
 
-当前 `makefile` 在 `DEBUG=1` 时使用 `-g` 编译，默认足够支持符号解析。如果切到 `DEBUG=0`，火焰图可读性会明显变差。
+使用 CMake 的 `Debug` 或 `RelWithDebInfo` 构建会包含调试符号，默认足够支持符号解析。如果使用纯 `Release` 且不带调试符号，火焰图可读性会明显变差。
 
 ### 4. 为什么不用 macOS 自带采样器
 
