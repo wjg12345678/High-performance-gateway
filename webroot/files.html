@@ -262,6 +262,46 @@
                 line-height: 1.5;
             }
 
+            .share-modal {
+                position: fixed;
+                inset: 0;
+                z-index: 50;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                padding: 18px;
+                background: rgba(47, 36, 25, 0.36);
+                backdrop-filter: blur(8px);
+            }
+
+            .share-modal.hidden {
+                display: none;
+            }
+
+            .share-dialog {
+                width: min(520px, 100%);
+                border: 1px solid rgba(159, 77, 47, 0.16);
+                border-radius: 24px;
+                background: var(--panel-strong);
+                box-shadow: var(--shadow);
+                padding: 22px;
+            }
+
+            .share-dialog h2 {
+                margin: 0;
+                font-size: 22px;
+            }
+
+            .share-dialog p {
+                margin: 8px 0 18px 0;
+                color: var(--muted);
+                line-height: 1.6;
+            }
+
+            .share-dialog .row {
+                margin-top: 4px;
+            }
+
             @media (max-width: 980px) {
                 .grid {
                     grid-template-columns: 1fr;
@@ -469,6 +509,31 @@
             </div>
         </div>
 
+        <div id="share-modal" class="share-modal hidden" aria-hidden="true">
+            <div class="share-dialog" role="dialog" aria-modal="true" aria-labelledby="share-modal-title">
+                <h2 id="share-modal-title">创建分享链接</h2>
+                <p>按需设置提取码、过期时间和下载次数；都留空就是无提取码、永久有效、不限下载。</p>
+                <form id="share-form" class="stack">
+                    <div>
+                        <label for="share-access-code">提取码（可选）</label>
+                        <input id="share-access-code" name="access_code" type="text" maxlength="32" placeholder="例如：2468，留空则无需提取码">
+                    </div>
+                    <div>
+                        <label for="share-expires-hours">过期时间（小时，可选）</label>
+                        <input id="share-expires-hours" name="expires_hours" type="number" min="0" step="1" placeholder="例如：24，留空或 0 表示永久有效">
+                    </div>
+                    <div>
+                        <label for="share-max-downloads">最大下载次数（可选）</label>
+                        <input id="share-max-downloads" name="max_downloads" type="number" min="0" step="1" placeholder="例如：5，留空或 0 表示不限次数">
+                    </div>
+                    <div class="row">
+                        <button type="submit" class="secondary">生成并复制</button>
+                        <button type="button" id="share-cancel-btn" class="ghost">取消</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
         <script>
             (function () {
                 const state = {
@@ -495,6 +560,14 @@
                 const uploadNameInput = document.getElementById("upload-name");
                 const uploadPublicInput = document.getElementById("upload-public");
                 const folderNameInput = document.getElementById("folder-name");
+
+                const shareModal = document.getElementById("share-modal");
+                const shareForm = document.getElementById("share-form");
+                const shareAccessCodeInput = document.getElementById("share-access-code");
+                const shareExpiresHoursInput = document.getElementById("share-expires-hours");
+                const shareMaxDownloadsInput = document.getElementById("share-max-downloads");
+                const shareCancelBtn = document.getElementById("share-cancel-btn");
+                let pendingShareDialog = null;
 
                 function updateTokenBox() {
                     if (!state.token) {
@@ -675,6 +748,58 @@
                     return window.location.origin + "/share?id=" + encodeURIComponent(String(fileId));
                 }
 
+                function openShareDialog(fileId) {
+                    if (!state.token) {
+                        return Promise.resolve({});
+                    }
+
+                    shareForm.reset();
+                    shareModal.classList.remove("hidden");
+                    shareModal.setAttribute("aria-hidden", "false");
+                    shareAccessCodeInput.focus();
+
+                    return new Promise(function (resolve) {
+                        pendingShareDialog = { fileId: fileId, resolve: resolve };
+                    });
+                }
+
+                function closeShareDialog(result) {
+                    if (!pendingShareDialog) {
+                        return;
+                    }
+                    const dialog = pendingShareDialog;
+                    pendingShareDialog = null;
+                    shareModal.classList.add("hidden");
+                    shareModal.setAttribute("aria-hidden", "true");
+                    dialog.resolve(result);
+                }
+
+                function parseOptionalInteger(input) {
+                    const raw = input.value.trim();
+                    if (!raw) {
+                        return 0;
+                    }
+                    const value = Number(raw);
+                    return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+                }
+
+                function readShareOptions() {
+                    const accessCode = shareAccessCodeInput.value.trim();
+                    const expiresHours = parseOptionalInteger(shareExpiresHoursInput);
+                    const maxDownloads = parseOptionalInteger(shareMaxDownloadsInput);
+                    const options = {};
+                    if (accessCode) {
+                        options.access_code = accessCode;
+                    }
+                    if (expiresHours > 0) {
+                        options.expires_in_seconds = expiresHours * 3600;
+                    }
+                    if (maxDownloads > 0) {
+                        options.max_downloads = maxDownloads;
+                    }
+                    return options;
+                }
+
                 async function copyText(text) {
                     if (navigator.clipboard && navigator.clipboard.writeText) {
                         await navigator.clipboard.writeText(text);
@@ -690,19 +815,38 @@
                     return text;
                 }
 
-                async function copyShareLink(fileId) {
+                function shareSuccessMessage(shareLink, options) {
+                    const shareOptions = options || {};
+                    const parts = ["分享链接已复制: " + shareLink];
+                    if (shareOptions.access_code) {
+                        parts.push("提取码: " + shareOptions.access_code);
+                    }
+                    if (shareOptions.expires_in_seconds) {
+                        parts.push("有效期: " + Math.floor(shareOptions.expires_in_seconds / 3600) + " 小时");
+                    }
+                    if (shareOptions.max_downloads) {
+                        parts.push("下载次数: " + shareOptions.max_downloads + " 次");
+                    }
+                    return parts.join("\n");
+                }
+
+                async function copyShareLink(fileId, options) {
                     let shareLink = buildShareLink(fileId);
+                    const shareOptions = options || {};
                     if (state.token) {
                         try {
                             const data = await requestJson("/api/private/files/" + encodeURIComponent(String(fileId)) + "/share", {
                                 method: "POST",
                                 headers: Object.assign({ "Content-Type": "application/json" }, authHeaders()),
-                                body: JSON.stringify({})
+                                body: JSON.stringify(shareOptions)
                             });
                             if (data.share && data.share.share_url) {
                                 shareLink = window.location.origin + data.share.share_url;
                             }
                         } catch (error) {
+                            if (Object.keys(shareOptions).length > 0) {
+                                throw error;
+                            }
                             // Public files owned by others still fall back to the legacy public share URL.
                         }
                     }
@@ -912,10 +1056,14 @@
 
                     if (shareId) {
                         try {
-                            const shareLink = await copyShareLink(shareId);
-                            setStatus("分享链接已复制: " + shareLink, "ok");
+                            const shareOptions = await openShareDialog(shareId);
+                            if (shareOptions === null) {
+                                return;
+                            }
+                            const shareLink = await copyShareLink(shareId, shareOptions);
+                            setStatus(shareSuccessMessage(shareLink, shareOptions), "ok");
                         } catch (error) {
-                            setStatus("分享链接复制未完成，请稍后重试。", "error");
+                            setStatus("分享链接复制未完成: " + error.message, "error");
                         }
                         return;
                     }
@@ -978,10 +1126,14 @@
 
                     if (shareId) {
                         try {
-                            const shareLink = await copyShareLink(shareId);
-                            setStatus("分享链接已复制: " + shareLink, "ok");
+                            const shareOptions = await openShareDialog(shareId);
+                            if (shareOptions === null) {
+                                return;
+                            }
+                            const shareLink = await copyShareLink(shareId, shareOptions);
+                            setStatus(shareSuccessMessage(shareLink, shareOptions), "ok");
                         } catch (error) {
-                            setStatus("分享链接复制未完成，请稍后重试。", "error");
+                            setStatus("分享链接复制未完成: " + error.message, "error");
                         }
                         return;
                     }
@@ -995,6 +1147,27 @@
                         setStatus("公开文件下载任务已开始。", "ok");
                     } catch (error) {
                         setStatus("公开文件下载未完成: " + error.message, "error");
+                    }
+                });
+
+                shareForm.addEventListener("submit", function (event) {
+                    event.preventDefault();
+                    closeShareDialog(readShareOptions());
+                });
+
+                shareCancelBtn.addEventListener("click", function () {
+                    closeShareDialog(null);
+                });
+
+                shareModal.addEventListener("click", function (event) {
+                    if (event.target === shareModal) {
+                        closeShareDialog(null);
+                    }
+                });
+
+                document.addEventListener("keydown", function (event) {
+                    if (event.key === "Escape" && pendingShareDialog) {
+                        closeShareDialog(null);
                     }
                 });
 

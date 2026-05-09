@@ -881,17 +881,34 @@ bool create_uploaded_file(MYSQL *mysql, const std::string &doc_root, const std::
 
     repo_mysql::PhysicalFileRecord physical;
     bool deduplicated = false;
-    if (!payload.sha256.empty() && repo_mysql::fetch_physical_file_by_sha256(mysql, payload.sha256, physical) &&
-        infra_storage::file_exists(infra_storage::file_path(doc_root, physical.stored_name)))
+    const bool has_physical = !payload.sha256.empty() &&
+                              repo_mysql::fetch_physical_file_by_sha256(mysql, payload.sha256, physical);
+    if (has_physical)
     {
-        deduplicated = true;
-        if (!repo_mysql::increment_physical_ref(mysql, physical.id))
+        const std::string disk_path = infra_storage::file_path(doc_root, physical.stored_name);
+        if (infra_storage::file_exists(disk_path))
+        {
+            deduplicated = true;
+            if (payload.use_temp_file)
+            {
+                infra_storage::remove_file(payload.temp_path);
+            }
+        }
+        else if (payload.use_temp_file)
+        {
+            if (!infra_storage::move_file_or_copy(payload.temp_path, disk_path))
+            {
+                return false;
+            }
+        }
+        else if (!infra_storage::write_file(disk_path, payload.content))
         {
             return false;
         }
-        if (payload.use_temp_file)
+
+        if (!repo_mysql::increment_physical_ref(mysql, physical.id))
         {
-            infra_storage::remove_file(payload.temp_path);
+            return false;
         }
     }
     else
@@ -924,10 +941,16 @@ bool create_uploaded_file(MYSQL *mysql, const std::string &doc_root, const std::
         {
             if (repo_mysql::last_errno(mysql) == 1062 && repo_mysql::fetch_physical_file_by_sha256(mysql, payload.sha256, physical))
             {
-                infra_storage::remove_file(disk_path);
-                if (!infra_storage::file_exists(infra_storage::file_path(doc_root, physical.stored_name)))
+                const std::string existing_path = infra_storage::file_path(doc_root, physical.stored_name);
+                if (!infra_storage::file_exists(existing_path) &&
+                    !infra_storage::move_file_or_copy(disk_path, existing_path))
                 {
+                    infra_storage::remove_file(disk_path);
                     return false;
+                }
+                else if (infra_storage::file_exists(disk_path))
+                {
+                    infra_storage::remove_file(disk_path);
                 }
                 deduplicated = true;
                 if (!repo_mysql::increment_physical_ref(mysql, physical.id))
