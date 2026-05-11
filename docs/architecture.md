@@ -16,7 +16,7 @@ flowchart LR
     SubN[SubReactor N<br/>conn epoll + timer heap]
     Pool[Dynamic Thread Pool]
     HTTP[http_conn<br/>HTTP parse + route + middleware]
-    MySQL[(MySQL<br/>user / user_sessions / files / operation_logs)]
+    MySQL[(MySQL<br/>users / user_sessions / files / operation_logs)]
     Files[(webroot/uploads)]
     Log[Async Log]
 
@@ -112,26 +112,29 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    Req[POST /api/private/files]
-    Auth[middleware_auth]
-    Parse[parse_post_body<br/>JSON / form / multipart]
-    Store[写入 webroot/uploads]
-    Meta[写入 files 表]
+    Req[POST /api/drive/files/upload]
+    Conn[HttpConnection<br/>multipart 临时文件]
+    Controller[FileController]
+    Upload[upload_service<br/>配额 / 去重 / 事务]
+    Store[webroot/uploads]
+    Meta[files / physical_files]
     Audit[写入 operation_logs]
     Resp[返回 file id / metadata]
 
-    Req --> Auth
-    Auth --> Parse
-    Parse --> Store
-    Store --> Meta
-    Meta --> Audit
+    Req --> Conn
+    Conn --> Controller
+    Controller --> Upload
+    Upload --> Store
+    Upload --> Meta
+    Controller --> Audit
     Audit --> Resp
 ```
 
 说明：
 
-- 上传文件内容落盘到 `webroot/uploads`
-- 文件元数据单独写入 `files`
+- `HttpConnection` 只负责协议解析、multipart 临时文件和响应生命周期
+- `upload_service` 在事务内完成用户行锁、容量校验、物理文件去重和逻辑文件插入
+- 文件内容最终落盘到 `webroot/uploads`，元数据写入 `files` / `physical_files`
 - 上传、下载、删除、登录等行为写入 `operation_logs`
 
 ## 鉴权与会话

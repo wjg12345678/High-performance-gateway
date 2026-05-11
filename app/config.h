@@ -80,6 +80,24 @@ public:
     long user_storage_quota_bytes;
     string threadpool_queue_mode;
 
+    //认证限流配置
+    int auth_rate_limit_enabled;
+    string redis_host;
+    int redis_port;
+    string redis_password;
+    int redis_db;
+    int redis_pool_size;
+    int redis_connect_timeout_ms;
+    int redis_socket_timeout_ms;
+    int redis_max_retries;
+    int auth_login_ip_max_tokens;
+    double auth_login_ip_refill_rate;
+    int auth_login_user_max_tokens;
+    double auth_login_user_refill_rate;
+    int auth_register_ip_max_tokens;
+    double auth_register_ip_refill_rate;
+    string auth_rate_limit_fallback_mode;
+
 private:
     string m_config_file_path;
 };

@@ -208,7 +208,7 @@ void WebServer::sql_pool()
     if (mysql != nullptr)
     {
         const char *required_tables[] = {
-            "user", "user_sessions", "files", "folders", "physical_files", "schema_migrations"};
+            "users", "user_sessions", "files", "folders", "physical_files", "file_shares", "operation_logs", "schema_migrations"};
         for (size_t i = 0; i < sizeof(required_tables) / sizeof(required_tables[0]); ++i)
         {
             if (!schema_table_exists(mysql, required_tables[i]))
@@ -218,9 +218,9 @@ void WebServer::sql_pool()
             }
         }
 
-        if (!schema_migration_applied(mysql, "002_upgrade_existing_drive_dedup"))
+        if (!schema_migration_applied(mysql, "005_normalize_schema"))
         {
-            LOG_ERROR("database schema migration 002_upgrade_existing_drive_dedup is not applied; run scripts/migrate_db.sh");
+            LOG_ERROR("database schema migration 005_normalize_schema is not applied; run scripts/migrate_db.sh");
         }
     }
     users[0].initmysql_result(m_connPool);

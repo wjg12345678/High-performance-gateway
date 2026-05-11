@@ -53,6 +53,13 @@ MYSQL *connection_pool::create_connection()
 		mysql_close(con);
 		return NULL;
 	}
+	if (mysql_set_character_set(connected, "utf8mb4") != 0)
+	{
+		LOG_ERROR("MySQL set charset failed host=%s db=%s error=%s",
+				  m_url.c_str(), m_DatabaseName.c_str(), mysql_error(connected));
+		mysql_close(connected);
+		return NULL;
+	}
 	return connected;
 }
 

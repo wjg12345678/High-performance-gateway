@@ -18,7 +18,7 @@
     ```bash
     ./wrk_test.sh http://127.0.0.1:9006/healthz 1000 5s 4 ./healthz.lua
     TOKEN=your-token ./wrk_test.sh http://127.0.0.1:9006/api/private/ping 200 10s 4 ./private_ping.lua
-    TOKEN=your-token ./wrk_test.sh http://127.0.0.1:9006/api/private/files 200 10s 4 ./private_files.lua
+    TOKEN=your-token ./wrk_test.sh http://127.0.0.1:9006/api/drive/items?folder_id=0 200 10s 4 ./drive_items.lua
     ```
 
 * 参数说明
@@ -58,5 +58,5 @@ Transfer/sec:      1.69KB
 ./wrk_test.sh http://127.0.0.1:9006/healthz 200 10s 4 ./healthz.lua
 ./wrk_test.sh http://127.0.0.1:9006/healthz 500 10s 4 ./healthz.lua
 TOKEN=your-token ./wrk_test.sh http://127.0.0.1:9006/api/private/ping 200 10s 4 ./private_ping.lua
-TOKEN=your-token ./wrk_test.sh http://127.0.0.1:9006/api/private/files 200 10s 4 ./private_files.lua
+TOKEN=your-token ./wrk_test.sh http://127.0.0.1:9006/api/drive/items?folder_id=0 200 10s 4 ./drive_items.lua
 ```

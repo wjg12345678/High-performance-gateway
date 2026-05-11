@@ -1,14 +1,13 @@
 #include "connection.h"
+#include "../router/router.h"
 #include "../../service/auth/auth_service.h"
 
 #include <mysql/mysql.h>
+#include <arpa/inet.h>
 #include <cerrno>
 #include <cstring>
 #include <fcntl.h>
 #include <openssl/ssl.h>
-#include <openssl/evp.h>
-#include <openssl/err.h>
-#include <openssl/rand.h>
 #include <unistd.h>
 
 #include "../../infra/db/sql_connection_pool.h"
@@ -30,19 +29,46 @@ const char *kError404Title = "Not Found";
 const char *kError413Title = "Payload Too Large";
 const char *kError501Title = "Not Implemented";
 const char *kError500Title = "Internal Error";
-const size_t kSessionTokenBytes = 32;
 
-std::string encode_hex(const unsigned char *data, size_t len)
+void parse_query_string(const string &query_string, map<string, string> &query)
 {
-    static const char kHexChars[] = "0123456789abcdef";
-    std::string hex;
-    hex.reserve(len * 2);
-    for (size_t i = 0; i < len; ++i)
+    size_t start = 0;
+    while (start <= query_string.size())
     {
-        hex.push_back(kHexChars[(data[i] >> 4) & 0x0F]);
-        hex.push_back(kHexChars[data[i] & 0x0F]);
+        size_t end = query_string.find('&', start);
+        string item = query_string.substr(start, end == string::npos ? string::npos : end - start);
+        if (!item.empty())
+        {
+            size_t eq = item.find('=');
+            string key = http_core::url_decode(item.substr(0, eq));
+            if (!key.empty())
+            {
+                query[key] = eq == string::npos ? "" : http_core::url_decode(item.substr(eq + 1));
+            }
+        }
+
+        if (end == string::npos)
+        {
+            break;
+        }
+        start = end + 1;
     }
-    return hex;
+}
+
+string response_headers_to_wire(const map<string, string> &headers)
+{
+    string wire;
+    for (map<string, string>::const_iterator it = headers.begin(); it != headers.end(); ++it)
+    {
+        if (!it->first.empty())
+        {
+            wire += it->first;
+            wire += ": ";
+            wire += it->second;
+            wire += "\r\n";
+        }
+    }
+    return wire;
 }
 }
 
@@ -52,7 +78,7 @@ void HttpConnection::initmysql_result(connection_pool *connPool)
     MYSQL *mysql = nullptr;
     connectionRAII mysqlcon(&mysql, connPool);
 
-    //在 user 表中检索 username/passwd，预加载到内存 map。
+    //在 users 表中检索账号凭据，预加载到内存 map。
     if (!service_auth::load_user_cache(mysql))
     {
         LOG_ERROR("SELECT user cache error:%s\n", mysql_error(mysql));
@@ -261,6 +287,7 @@ void HttpConnection::init()
     m_query_string_storage.clear();
     m_response_body_storage.clear();
     m_extra_headers.clear();
+    m_headers.clear();
     m_form_data.clear();
     m_json_data.clear();
     m_authorization.clear();
@@ -323,67 +350,7 @@ void HttpConnection::cleanup_temp_upload_state()
 string HttpConnection::make_session_token(const string &username) const
 {
     (void)username;
-
-    unsigned char token_bytes[kSessionTokenBytes];
-    if (RAND_bytes(token_bytes, sizeof(token_bytes)) != 1)
-    {
-        return "";
-    }
-    return encode_hex(token_bytes, sizeof(token_bytes));
-}
-
-const char *HttpConnection::method_name() const
-{
-    switch (m_method)
-    {
-    case GET: return "GET";
-    case POST: return "POST";
-    case HEAD: return "HEAD";
-    case PUT: return "PUT";
-    case DELETE: return "DELETE";
-    case TRACE: return "TRACE";
-    case OPTIONS: return "OPTIONS";
-    case CONNECT: return "CONNECT";
-    case PATH: return "PATCH";
-    default: return "UNKNOWN";
-    }
-}
-
-bool HttpConnection::is_api_request() const
-{
-    return m_url != nullptr && strncasecmp(m_url, "/api/", strlen("/api/")) == 0;
-}
-
-bool HttpConnection::requires_auth() const
-{
-    if (m_url == nullptr)
-    {
-        return false;
-    }
-    return strncasecmp(m_url, "/api/private/", strlen("/api/private/")) == 0 ||
-           strncasecmp(m_url, "/api/drive/", strlen("/api/drive/")) == 0 ||
-           strncasecmp(m_url, "/api/admin/", strlen("/api/admin/")) == 0;
-}
-
-bool HttpConnection::should_skip_request_log() const
-{
-    if (m_url == nullptr)
-    {
-        return false;
-    }
-
-    if (strcasecmp(m_url, "/healthz") == 0)
-    {
-        return true;
-    }
-
-    // Skip high-frequency static GET/HEAD requests to reduce lock contention in request logging.
-    if ((m_method == GET || m_method == HEAD) && !is_api_request())
-    {
-        return true;
-    }
-
-    return false;
+    return http_core::make_session_token();
 }
 
 
@@ -407,10 +374,11 @@ HttpConnection::HTTP_CODE HttpConnection::do_request()
         {
             if (m_body_parse_error_status > 0)
             {
+                const string message = m_body_parse_error_message.empty() ? "bad request" : m_body_parse_error_message;
                 set_memory_response(m_body_parse_error_status,
                                     m_body_parse_error_title.empty() ? kError400Title : m_body_parse_error_title.c_str(),
                                     string("{\"code\":") + std::to_string(m_body_parse_error_status) +
-                                        ",\"message\":\"" + json_escape(m_body_parse_error_message.empty() ? "bad request" : m_body_parse_error_message) + "\"}",
+                                        ",\"message\":\"" + json_escape(message) + "\"}",
                                     "application/json");
                 return MEMORY_REQUEST;
             }
@@ -418,85 +386,116 @@ HttpConnection::HTTP_CODE HttpConnection::do_request()
         }
     }
 
-    HTTP_CODE middleware_code = run_before_middlewares();
-    if (middleware_code != NO_REQUEST)
-    {
-        return middleware_code;
-    }
-
-    return run_after_middlewares(route_request());
-}
-
-HttpConnection::HTTP_CODE HttpConnection::run_before_middlewares()
-{
-    HTTP_CODE code = middleware_request_log();
-    if (code != NO_REQUEST)
-    {
-        return code;
-    }
-    return middleware_auth();
-}
-
-HttpConnection::HTTP_CODE HttpConnection::run_after_middlewares(HTTP_CODE code)
-{
-    if (!is_api_request())
-    {
-        return code;
-    }
-
+    http_core::HttpRequest request = build_request();
+    http_core::RequestContext context = build_request_context(request);
+    http_core::HttpResponse response;
+    HTTP_CODE code = http_router::handle_request(request, context, response);
+    release_consumed_temp_uploads(request, context);
+    m_current_user = context.current_user;
     if (code == MEMORY_REQUEST || code == FILE_REQUEST || code == OPTIONS_REQUEST)
     {
-        return code;
+        return apply_application_response(response);
     }
-
-    int status = 500;
-    const char *title = kError500Title;
-    const char *message = "internal server error";
-    if (code == BAD_REQUEST)
-    {
-        status = 400;
-        title = kError400Title;
-        message = "bad request";
-    }
-    else if (code == NO_RESOURCE)
-    {
-        status = 404;
-        title = kError404Title;
-        message = "resource not found";
-    }
-    else if (code == FORBIDDEN_REQUEST)
-    {
-        status = 403;
-        title = kError403Title;
-        message = "forbidden";
-    }
-    else if (code == NOT_IMPLEMENTED)
-    {
-        status = 501;
-        title = kError501Title;
-        message = "not implemented";
-    }
-    else if (code == PAYLOAD_TOO_LARGE)
-    {
-        status = 413;
-        title = kError413Title;
-        message = "payload too large";
-    }
-
-    char body[128];
-    snprintf(body, sizeof(body), "{\"code\":%d,\"message\":\"%s\"}", status, message);
-    set_memory_response(status, title, body, "application/json");
-    return MEMORY_REQUEST;
+    return code;
 }
 
-HttpConnection::HTTP_CODE HttpConnection::middleware_request_log()
+http_core::HttpRequest HttpConnection::build_request() const
 {
-    if (0 == m_close_log && !should_skip_request_log())
+    http_core::HttpRequest request;
+    request.method = m_method;
+    request.path = m_url == nullptr ? "" : m_url;
+    request.query_string = m_query_string == nullptr ? "" : m_query_string;
+    request.version = m_version == nullptr ? "" : m_version;
+    request.headers = m_headers;
+    if (m_host != nullptr && request.headers.find("host") == request.headers.end())
     {
-        Log::get_instance()->write_log(1, "request %s %s content_type=%s content_length=%ld",
-                                       method_name(), m_url ? m_url : "",
-                                       m_content_type[0] ? m_content_type : "-",
-                                       m_content_length);
+        request.headers["host"] = m_host;
     }
-    return NO_REQUEST;
+    if (m_content_type[0] != '\0' && request.headers.find("content-type") == request.headers.end())
+    {
+        request.headers["content-type"] = m_content_type;
+    }
+    if (!m_authorization.empty() && request.headers.find("authorization") == request.headers.end())
+    {
+        request.headers["authorization"] = m_authorization;
+    }
+    parse_query_string(request.query_string, request.query);
+    request.content_length = m_content_length;
+    request.content_length_seen = m_content_length_seen;
+    request.keep_alive = m_linger;
+    request.http_1_1 = m_is_http_1_1;
+    request.chunked = m_chunked;
+    request.body = m_request_body;
+    request.form = m_form_data;
+    request.json = m_json_data;
+    request.upload.temp_path = m_upload_tmp_path;
+    request.upload.filename = m_upload_tmp_filename;
+    request.upload.content_type = m_upload_tmp_content_type;
+    request.upload.sha256 = m_upload_tmp_sha256;
+    request.upload.size = m_upload_tmp_size;
+    return request;
+}
+
+http_core::RequestContext HttpConnection::build_request_context(const http_core::HttpRequest &request) const
+{
+    http_core::RequestContext context;
+    context.mysql = mysql;
+    context.doc_root = doc_root;
+    context.current_user = m_current_user;
+    context.upload_max_bytes = m_upload_max_bytes;
+    context.user_storage_quota_bytes = m_user_storage_quota_bytes;
+    context.legacy_compat_enabled = m_legacy_compat_enabled;
+    context.close_log = m_close_log;
+    context.user_agent = request.header_value("user-agent");
+
+    char ip[INET_ADDRSTRLEN] = {0};
+    if (inet_ntop(AF_INET, &m_address.sin_addr, ip, sizeof(ip)) != nullptr)
+    {
+        context.client_ip = ip;
+    }
+    return context;
+}
+
+void HttpConnection::release_consumed_temp_uploads(const http_core::HttpRequest &request,
+                                                   const http_core::RequestContext &context)
+{
+    if (request.upload.released && request.upload.temp_path == m_upload_tmp_path)
+    {
+        m_upload_tmp_path.clear();
+        return;
+    }
+
+    for (size_t i = 0; i < context.released_temp_upload_paths.size(); ++i)
+    {
+        if (context.released_temp_upload_paths[i] == m_upload_tmp_path)
+        {
+            m_upload_tmp_path.clear();
+        }
+    }
+}
+
+HttpConnection::HTTP_CODE HttpConnection::apply_application_response(const http_core::HttpResponse &response)
+{
+    if (response.options_response)
+    {
+        m_response_body = "";
+        m_response_body_len = 0;
+        return OPTIONS_REQUEST;
+    }
+
+    if (response.file.enabled)
+    {
+        if (!open_managed_file(response.file.path, response.file.content_type, response.file.download_name))
+        {
+            set_memory_response(404, kError404Title,
+                                "{\"code\":404,\"message\":\"file content not found\"}",
+                                "application/json");
+            return MEMORY_REQUEST;
+        }
+        return FILE_REQUEST;
+    }
+
+    set_memory_response(response.status, response.title.c_str(), response.body, response.content_type.c_str());
+    m_extra_headers = response_headers_to_wire(response.headers);
+    return MEMORY_REQUEST;
 }

@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-$ROOT_DIR/build-coverage}"
 
 cmake -S "$ROOT_DIR" -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Debug -DATLAS_ENABLE_COVERAGE=ON
-cmake --build "$BUILD_DIR" --target parser-chunked-test --parallel "${BUILD_PARALLEL:-2}"
+cmake --build "$BUILD_DIR" --target atlas-unit-tests --parallel "${BUILD_PARALLEL:-2}"
 ctest --test-dir "$BUILD_DIR" --output-on-failure
 
 if command -v gcovr >/dev/null 2>&1; then

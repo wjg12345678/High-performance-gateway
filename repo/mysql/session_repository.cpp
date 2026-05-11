@@ -13,8 +13,10 @@ bool find_active_session(MYSQL *mysql, const std::string &token, SessionRecord &
         return false;
     }
 
-    const std::string sql = "SELECT username, UNIX_TIMESTAMP(expires_at) FROM user_sessions "
-                            "WHERE token='" + escape(mysql, token) + "' AND expires_at > NOW() LIMIT 1";
+    const std::string sql = "SELECT u.username, UNIX_TIMESTAMP(s.expires_at) "
+                            "FROM user_sessions s JOIN users u ON u.id=s.user_id "
+                            "WHERE s.token='" + escape(mysql, token) +
+                            "' AND s.expires_at > NOW() AND u.disabled_at IS NULL LIMIT 1";
     if (mysql_query(mysql, sql.c_str()) != 0)
     {
         return false;
@@ -58,11 +60,12 @@ bool upsert_session(MYSQL *mysql, const std::string &token, const std::string &u
         return false;
     }
 
-    const std::string sql = "INSERT INTO user_sessions(token, username, expires_at) "
-                            "VALUES('" + escape(mysql, token) + "', '" + escape(mysql, username) +
-                            "', DATE_ADD(NOW(), INTERVAL " + std::to_string(ttl_seconds) + " SECOND)) "
-                            "ON DUPLICATE KEY UPDATE username=VALUES(username), expires_at=VALUES(expires_at)";
-    return mysql_query(mysql, sql.c_str()) == 0;
+    const std::string sql = "INSERT INTO user_sessions(token, user_id, expires_at) "
+                            "SELECT '" + escape(mysql, token) + "', id, DATE_ADD(NOW(), INTERVAL " +
+                            std::to_string(ttl_seconds) + " SECOND) FROM users WHERE username='" +
+                            escape(mysql, username) + "' AND disabled_at IS NULL "
+                            "ON DUPLICATE KEY UPDATE user_id=VALUES(user_id), expires_at=VALUES(expires_at)";
+    return mysql_query(mysql, sql.c_str()) == 0 && mysql_affected_rows(mysql) > 0;
 }
 
 bool refresh_session(MYSQL *mysql, const std::string &token, const std::string &username, int ttl_seconds, bool &updated)
@@ -73,10 +76,11 @@ bool refresh_session(MYSQL *mysql, const std::string &token, const std::string &
         return false;
     }
 
-    const std::string sql = "UPDATE user_sessions SET expires_at=DATE_ADD(NOW(), INTERVAL " +
-                            std::to_string(ttl_seconds) + " SECOND) WHERE token='" +
-                            escape(mysql, token) + "' AND username='" + escape(mysql, username) +
-                            "' AND expires_at > NOW()";
+    const std::string sql = "UPDATE user_sessions s JOIN users u ON u.id=s.user_id "
+                            "SET s.expires_at=DATE_ADD(NOW(), INTERVAL " +
+                            std::to_string(ttl_seconds) + " SECOND) WHERE s.token='" +
+                            escape(mysql, token) + "' AND u.username='" + escape(mysql, username) +
+                            "' AND s.expires_at > NOW() AND u.disabled_at IS NULL";
     if (mysql_query(mysql, sql.c_str()) != 0)
     {
         return false;
@@ -104,10 +108,11 @@ bool delete_user_sessions(MYSQL *mysql, const std::string &username, const std::
         return false;
     }
 
-    std::string sql = "DELETE FROM user_sessions WHERE username='" + escape(mysql, username) + "'";
+    std::string sql = "DELETE s FROM user_sessions s JOIN users u ON u.id=s.user_id "
+                      "WHERE u.username='" + escape(mysql, username) + "'";
     if (!except_token.empty())
     {
-        sql += " AND token<>'" + escape(mysql, except_token) + "'";
+        sql += " AND s.token<>'" + escape(mysql, except_token) + "'";
     }
     return mysql_query(mysql, sql.c_str()) == 0;
 }

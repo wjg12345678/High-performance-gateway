@@ -2,6 +2,8 @@
 #define LOG_H
 
 #include <stdio.h>
+#include <time.h>
+#include <atomic>
 #include <iostream>
 #include <string>
 #include <stdarg.h>
@@ -41,10 +43,19 @@ public:
     void flush(void);
 
 private:
+    struct QueuedLog
+    {
+        QueuedLog() : data(), time_info() {}
+
+        std::string data;
+        tm time_info;
+    };
+
     Log();
     virtual ~Log();
     void *async_write_log();
     void shutdown_async();
+    void write_to_file_locked(const char *data, size_t len, const tm &time_info);
 
 private:
     const char *level_name(int level) const;
@@ -58,7 +69,8 @@ private:
     long long m_count;  //日志行数记录
     int m_today;        //因为按天分类,记录当前时间是那一天
     FILE *m_fp;         //打开log的文件指针
-    block_queue<string> *m_log_queue; //阻塞队列
+    block_queue<QueuedLog> *m_log_queue; //阻塞队列
+    std::atomic<int> m_pending_logs;
     bool m_is_async;                  //是否同步标志位
     bool m_thread_started;
     pthread_t m_write_thread;

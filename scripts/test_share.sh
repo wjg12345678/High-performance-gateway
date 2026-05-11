@@ -18,7 +18,7 @@ DOWNLOAD_FILE="$(mktemp)"
 trap 'rm -f "$TMP_FILE" "$DOWNLOAD_FILE" "$STATUS_BODY"' EXIT INT TERM
 STATUS_BODY="$(mktemp)"
 
-UPLOAD_RESPONSE="$(curl -sS -X POST "$BASE_URL/api/private/files" \
+UPLOAD_RESPONSE="$(curl -sS -X POST "$BASE_URL/api/drive/files/upload" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Expect:" \
     -F "file=@$TMP_FILE;type=text/plain" \
@@ -30,7 +30,7 @@ if [ -z "$FILE_ID" ]; then
     exit 1
 fi
 
-SHARE_RESPONSE="$(curl -sS -X POST "$BASE_URL/api/private/files/$FILE_ID/share" \
+SHARE_RESPONSE="$(curl -sS -X POST "$BASE_URL/api/drive/files/$FILE_ID/share" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     -d '{"access_code":"2468","expires_in_seconds":3600,"max_downloads":1}')"
@@ -65,7 +65,7 @@ if [ "$SECOND_STATUS" -ne 429 ]; then
     exit 1
 fi
 
-EXPIRING_RESPONSE="$(curl -sS -X POST "$BASE_URL/api/private/files/$FILE_ID/share" \
+EXPIRING_RESPONSE="$(curl -sS -X POST "$BASE_URL/api/drive/files/$FILE_ID/share" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     -d '{"expires_in_seconds":1}')"

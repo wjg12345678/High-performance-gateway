@@ -1,7 +1,6 @@
 CREATE TABLE IF NOT EXISTS user (
     username VARCHAR(50) NOT NULL,
     passwd VARCHAR(128) NOT NULL,
-    passwd_salt VARCHAR(64) NOT NULL DEFAULT '',
     UNIQUE KEY uq_username (username)
 ) ENGINE=InnoDB;
 
@@ -94,11 +93,9 @@ CREATE TABLE IF NOT EXISTS operation_logs (
     KEY idx_username (username)
 ) ENGINE=InnoDB;
 
-INSERT INTO user(username, passwd, passwd_salt)
+INSERT INTO user(username, passwd)
 SELECT 'name',
-       'pbkdf2_sha256$210000$5f0b5c0e6f4d9a71c2e84f10aa7d3912$69b9ececeda544f749543a4b941fd186bb779d96d9c54ff0dbb09294a7fe4108',
-       ''
+       'pbkdf2_sha256$210000$5f0b5c0e6f4d9a71c2e84f10aa7d3912$69b9ececeda544f749543a4b941fd186bb779d96d9c54ff0dbb09294a7fe4108'
 WHERE NOT EXISTS (
     SELECT 1 FROM user WHERE username = 'name'
 );
-

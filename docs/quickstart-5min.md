@@ -53,7 +53,7 @@ TOKEN="$(printf '%s' "$LOGIN_JSON" | python3 -c 'import json,sys; print(json.loa
 ```bash
 printf 'hello atlas webserver\n' > /tmp/atlas-demo.txt
 
-UPLOAD_JSON="$(curl -sS -X POST "$BASE_URL/api/private/files" \
+UPLOAD_JSON="$(curl -sS -X POST "$BASE_URL/api/drive/files/upload" \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Expect:' \
   -F 'file=@/tmp/atlas-demo.txt;type=text/plain' \
@@ -63,11 +63,11 @@ echo "$UPLOAD_JSON"
 
 FILE_ID="$(printf '%s' "$UPLOAD_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["file"]["id"])')"
 
-curl -sS "$BASE_URL/api/private/files?limit=10" \
+curl -sS "$BASE_URL/api/drive/items?folder_id=0" \
   -H "Authorization: Bearer $TOKEN" \
   | python3 -m json.tool
 
-curl -i -sS "$BASE_URL/api/private/files/$FILE_ID/download" \
+curl -i -sS "$BASE_URL/api/drive/files/$FILE_ID/download" \
   -H "Authorization: Bearer $TOKEN"
 ```
 
@@ -86,7 +86,7 @@ BASE_URL="$BASE_URL" USER_NAME=resume_chunked_demo PASSWORD=123456 \
 BASE_URL="$BASE_URL" scripts/run_smoke_suite.sh
 ```
 
-冒烟测试覆盖：认证、私有 API、文件上传/下载/回收站、chunked echo 和 chunked multipart 上传。
+冒烟测试覆盖：认证、私有 API、文件上传/下载/删除、chunked echo 和 chunked multipart 上传。
 
 ## 清理环境
 

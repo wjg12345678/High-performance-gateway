@@ -3,6 +3,7 @@
 #include <sys/time.h>
 #include <stdarg.h>
 #include <unistd.h>
+#include <utility>
 #include <vector>
 #include "log.h"
 #include <pthread.h>
@@ -34,6 +35,7 @@ Log::Log()
     m_log_buf_size = 0;
     m_is_async = false;
     m_log_queue = NULL;
+    m_pending_logs.store(0);
     m_fp = NULL;
     m_thread_started = false;
     m_write_thread = 0;
@@ -69,12 +71,17 @@ bool Log::init(const char *file_name, int close_log, int log_buf_size, int split
     m_log_level = log_level;
     m_log_buf_size = log_buf_size;
     m_split_lines = split_lines;
+    m_pending_logs.store(0);
+    if (file_name == NULL)
+    {
+        return false;
+    }
 
     //如果设置了max_queue_size,则设置为异步
     if (max_queue_size >= 1)
     {
         m_is_async = true;
-        m_log_queue = new block_queue<string>(max_queue_size);
+        m_log_queue = new block_queue<QueuedLog>(max_queue_size);
         //flush_log_thread为回调函数,这里表示创建线程异步写日志
         if (pthread_create(&m_write_thread, NULL, flush_log_thread, NULL) != 0)
         {
@@ -101,9 +108,15 @@ bool Log::init(const char *file_name, int close_log, int log_buf_size, int split
     }
     else
     {
-        strcpy(log_name, p + 1);
-        strncpy(dir_name, file_name, p - file_name + 1);
-        dir_name[p - file_name + 1] = '\0';
+        strncpy(log_name, p + 1, sizeof(log_name) - 1);
+        log_name[sizeof(log_name) - 1] = '\0';
+        size_t dir_len = static_cast<size_t>(p - file_name + 1);
+        if (dir_len >= sizeof(dir_name))
+        {
+            dir_len = sizeof(dir_name) - 1;
+        }
+        memcpy(dir_name, file_name, dir_len);
+        dir_name[dir_len] = '\0';
     }
 
     m_today_year = my_tm.tm_year + 1900;
@@ -151,8 +164,12 @@ string Log::build_log_file_path(const tm &time_info, int file_index) const
 
 void Log::rotate_file(const tm &my_tm)
 {
-    fflush(m_fp);
-    fclose(m_fp);
+    if (m_fp != NULL)
+    {
+        fflush(m_fp);
+        fclose(m_fp);
+        m_fp = NULL;
+    }
 
     bool date_changed = (m_today_year != my_tm.tm_year + 1900) ||
                         (m_today_mon != my_tm.tm_mon + 1) ||
@@ -175,9 +192,32 @@ void Log::rotate_file(const tm &my_tm)
     m_fp = fopen(build_log_file_path(current_time, m_file_index).c_str(), "a");
 }
 
+void Log::write_to_file_locked(const char *data, size_t len, const tm &time_info)
+{
+    if (data == NULL || len == 0 || m_fp == NULL)
+    {
+        return;
+    }
+
+    m_count++;
+
+    if ((m_today_year != time_info.tm_year + 1900) ||
+        (m_today_mon != time_info.tm_mon + 1) ||
+        (m_today != time_info.tm_mday) ||
+        (m_split_lines > 0 && m_count > 0 && m_count % m_split_lines == 0))
+    {
+        rotate_file(time_info);
+    }
+
+    if (m_fp != NULL)
+    {
+        fwrite(data, 1, len, m_fp);
+    }
+}
+
 void Log::write_log(int level, const char *format, ...)
 {
-    if (level < m_log_level)
+    if (m_close_log != 0 || level < m_log_level)
     {
         return;
     }
@@ -210,11 +250,10 @@ void Log::write_log(int level, const char *format, ...)
     }
     if (static_cast<size_t>(prefix_len) < buffer_size)
     {
-        vsnprintf(buffer + prefix_len, buffer_size - static_cast<size_t>(prefix_len), format, valst);
+        vsnprintf(buffer + prefix_len, buffer_size - static_cast<size_t>(prefix_len), format != NULL ? format : "", valst);
     }
     va_end(valst);
 
-    string log_str;
     size_t log_len = strnlen(buffer, buffer_size - 1);
     if (log_len + 1 >= buffer_size)
     {
@@ -222,34 +261,22 @@ void Log::write_log(int level, const char *format, ...)
     }
     buffer[log_len++] = '\n';
     buffer[log_len] = '\0';
-    log_str.assign(buffer, log_len);
 
-    bool should_enqueue = false;
-    //写入一个log，对m_count++, m_split_lines最大行数
-    m_mutex.lock();
-    m_count++;
-
-    if ((m_today_year != my_tm.tm_year + 1900) ||
-        (m_today_mon != my_tm.tm_mon + 1) ||
-        (m_today != my_tm.tm_mday) ||
-        (m_split_lines > 0 && m_count > 0 && m_count % m_split_lines == 0))
+    if (m_is_async && m_log_queue != NULL)
     {
-        rotate_file(my_tm);
-    }
-
-    should_enqueue = m_is_async && m_log_queue != NULL;
-    m_mutex.unlock();
-
-    if (should_enqueue && m_log_queue->push(log_str))
-    {
-        return;
+        QueuedLog queued_log;
+        queued_log.data.assign(buffer, log_len);
+        queued_log.time_info = my_tm;
+        m_pending_logs.fetch_add(1, std::memory_order_release);
+        if (m_log_queue->push(std::move(queued_log)))
+        {
+            return;
+        }
+        m_pending_logs.fetch_sub(1, std::memory_order_release);
     }
 
     m_mutex.lock();
-    if (m_fp != NULL)
-    {
-        fputs(log_str.c_str(), m_fp);
-    }
+    write_to_file_locked(buffer, log_len, my_tm);
     m_mutex.unlock();
 }
 
@@ -257,7 +284,7 @@ void Log::flush(void)
 {
     if (m_is_async && m_log_queue != NULL)
     {
-        while (!m_log_queue->empty())
+        while (m_pending_logs.load(std::memory_order_acquire) > 0)
         {
             usleep(1000);
         }
@@ -273,14 +300,25 @@ void Log::flush(void)
 
 void *Log::async_write_log()
 {
-    string single_log;
+    const size_t max_batch_size = 64;
+    vector<QueuedLog> batch;
+    batch.reserve(max_batch_size);
+    QueuedLog single_log;
     //从阻塞队列中取出日志，直到队列关闭并被消费完
     while (m_log_queue != NULL && m_log_queue->pop(single_log))
     {
-        m_mutex.lock();
-        if (m_fp != NULL)
+        batch.clear();
+        batch.push_back(std::move(single_log));
+        while (batch.size() < max_batch_size && m_log_queue->try_pop(single_log))
         {
-            fputs(single_log.c_str(), m_fp);
+            batch.push_back(std::move(single_log));
+        }
+
+        m_mutex.lock();
+        for (size_t i = 0; i < batch.size(); ++i)
+        {
+            write_to_file_locked(batch[i].data.data(), batch[i].data.size(), batch[i].time_info);
+            m_pending_logs.fetch_sub(1, std::memory_order_release);
         }
         m_mutex.unlock();
     }

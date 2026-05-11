@@ -108,4 +108,6 @@ if ! printf '%s' "$AFTER_DELETE" | assert_json; then
     exit 1
 fi
 echo "after delete: $AFTER_DELETE"
+echo "purge: $(curl -sS -X DELETE "$BASE_URL/api/drive/files/$FILE_ID/permanent" -H "Authorization: Bearer $TOKEN")"
+echo "purge dedup copy: $(curl -sS -X DELETE "$BASE_URL/api/drive/files/$DEDUP_FILE_ID/permanent" -H "Authorization: Bearer $TOKEN")"
 echo "delete now-empty folder: $(curl -sS -X DELETE "$BASE_URL/api/drive/folders/$FOLDER_ID" -H "Authorization: Bearer $TOKEN")"

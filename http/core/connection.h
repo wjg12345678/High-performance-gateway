@@ -11,27 +11,11 @@
 #include <string>
 #include <vector>
 
+#include "http_message.h"
 #include "ring_buffer.h"
 #include "../../infra/lock/locker.h"
 
 typedef struct MYSQL MYSQL;
-
-namespace repo_mysql
-{
-struct OperationLogItem;
-}
-
-namespace service_files
-{
-struct UploadPayload;
-}
-
-namespace http_controllers
-{
-class AuthController;
-class FileController;
-class OperationController;
-}
 
 struct ssl_st;
 using SSL = ssl_st;
@@ -46,48 +30,42 @@ using std::vector;
 
 class HttpConnection
 {
-    friend class http_controllers::AuthController;
-    friend class http_controllers::FileController;
-    friend class http_controllers::OperationController;
-
 public:
     static const int FILENAME_LEN = 200;
     static const int READ_BUFFER_INITIAL_SIZE = 16384;
     static const int READ_BUFFER_MAX_SIZE = 2 * 1024 * 1024;
     static const int WRITE_BUFFER_INITIAL_SIZE = 8192;
-    enum METHOD
-    {
-        GET = 0,
-        POST,
-        HEAD,
-        PUT,
-        DELETE,
-        TRACE,
-        OPTIONS,
-        CONNECT,
-        PATH
-    };
+    using METHOD = http_core::Method;
+    static constexpr METHOD GET = http_core::GET;
+    static constexpr METHOD POST = http_core::POST;
+    static constexpr METHOD HEAD = http_core::HEAD;
+    static constexpr METHOD PUT = http_core::PUT;
+    static constexpr METHOD DELETE = http_core::DELETE;
+    static constexpr METHOD TRACE = http_core::TRACE;
+    static constexpr METHOD OPTIONS = http_core::OPTIONS;
+    static constexpr METHOD CONNECT = http_core::CONNECT;
+    static constexpr METHOD PATH = http_core::PATH;
+
     enum CHECK_STATE
     {
         CHECK_STATE_REQUESTLINE = 0,
         CHECK_STATE_HEADER,
         CHECK_STATE_CONTENT
     };
-    enum HTTP_CODE
-    {
-        NO_REQUEST,
-        GET_REQUEST,
-        BAD_REQUEST,
-        NO_RESOURCE,
-        FORBIDDEN_REQUEST,
-        FILE_REQUEST,
-        INTERNAL_ERROR,
-        CLOSED_CONNECTION,
-        OPTIONS_REQUEST,
-        NOT_IMPLEMENTED,
-        PAYLOAD_TOO_LARGE,
-        MEMORY_REQUEST
-    };
+    using HTTP_CODE = http_core::HttpCode;
+    static constexpr HTTP_CODE NO_REQUEST = http_core::NO_REQUEST;
+    static constexpr HTTP_CODE GET_REQUEST = http_core::GET_REQUEST;
+    static constexpr HTTP_CODE BAD_REQUEST = http_core::BAD_REQUEST;
+    static constexpr HTTP_CODE NO_RESOURCE = http_core::NO_RESOURCE;
+    static constexpr HTTP_CODE FORBIDDEN_REQUEST = http_core::FORBIDDEN_REQUEST;
+    static constexpr HTTP_CODE FILE_REQUEST = http_core::FILE_REQUEST;
+    static constexpr HTTP_CODE INTERNAL_ERROR = http_core::INTERNAL_ERROR;
+    static constexpr HTTP_CODE CLOSED_CONNECTION = http_core::CLOSED_CONNECTION;
+    static constexpr HTTP_CODE OPTIONS_REQUEST = http_core::OPTIONS_REQUEST;
+    static constexpr HTTP_CODE NOT_IMPLEMENTED = http_core::NOT_IMPLEMENTED;
+    static constexpr HTTP_CODE PAYLOAD_TOO_LARGE = http_core::PAYLOAD_TOO_LARGE;
+    static constexpr HTTP_CODE MEMORY_REQUEST = http_core::MEMORY_REQUEST;
+
     enum LINE_STATUS
     {
         LINE_OK = 0,
@@ -103,8 +81,6 @@ public:
         CHUNK_STATE_TRAILER,
         CHUNK_STATE_DONE
     };
-
-    using RouteHandler = HTTP_CODE (HttpConnection::*)();
 
 public:
     HttpConnection() : mysql(nullptr), m_state(0), timer_flag(0), improv(0), m_epollfd(-1), m_sockfd(-1), m_last_active(0), m_ssl(nullptr), m_https_enabled(false), m_tls_handshake_done(true), m_tls_want_event(EPOLLIN), m_file_send_offset(0), m_file_send_size(0), m_body_parse_error_status(0), m_stream_body_file(nullptr), m_stream_body_bytes_received(0), m_upload_tmp_size(0) {}
@@ -173,36 +149,11 @@ private:
     HTTP_CODE parse_chunked_content();
     HTTP_CODE append_decoded_body_chunk(const char *data, long len);
     HTTP_CODE do_request();
-
-    // Routing and middleware orchestration.
-    HTTP_CODE run_before_middlewares();
-    HTTP_CODE run_after_middlewares(HTTP_CODE code);
-    HTTP_CODE middleware_request_log();
-    HTTP_CODE middleware_auth();
-    HTTP_CODE route_api_login();
-    HTTP_CODE route_api_register();
-    HTTP_CODE route_api_echo();
-    HTTP_CODE route_api_private_ping();
-    HTTP_CODE route_api_private_logout();
-    HTTP_CODE route_healthz();
-    HTTP_CODE route_page_login();
-    HTTP_CODE route_page_register();
-    HTTP_CODE route_register_page();
-    HTTP_CODE route_login_page();
-    HTTP_CODE route_picture_page();
-    HTTP_CODE route_video_page();
-    HTTP_CODE route_fans_page();
-    HTTP_CODE route_request();
-    HTTP_CODE handle_api_request();
-    HTTP_CODE handle_api_private_files_collection();
-    HTTP_CODE handle_api_private_file_item(const char *path);
-    HTTP_CODE handle_api_drive_request();
-    HTTP_CODE handle_api_drive_folder_item(const char *path);
-    HTTP_CODE handle_api_drive_file_item(const char *path);
-    HTTP_CODE handle_api_public_file_item(const char *path);
-    HTTP_CODE handle_api_share_item(const char *path);
-    HTTP_CODE handle_static_route();
-    HTTP_CODE open_static_file();
+    http_core::HttpRequest build_request() const;
+    http_core::RequestContext build_request_context(const http_core::HttpRequest &request) const;
+    void release_consumed_temp_uploads(const http_core::HttpRequest &request,
+                                       const http_core::RequestContext &context);
+    HTTP_CODE apply_application_response(const http_core::HttpResponse &response);
 
     // Request body parsing.
     bool parse_post_body();
@@ -217,58 +168,18 @@ private:
     string json_escape(const string &value) const;
     bool decode_base64(const string &input, string &output) const;
     string header_param_value(const string &header_line, const string &key) const;
-    string request_value(const string &primary, const string &fallback = "") const;
-    string query_value(const string &key) const;
-    long query_long_value(const string &key, long fallback, long minimum, long maximum) const;
-    bool query_truthy_value(const string &key) const;
-    string escape_sql_value(const string &value) const;
     void set_memory_response(int status, const char *title, const string &body, const char *content_type);
-    bool has_user_session() const;
-    HTTP_CODE require_user_session(const char *message);
-    HTTP_CODE respond_json_error(int status, const char *title, const string &message);
-    const char *method_name() const;
-    bool is_api_request() const;
-    bool requires_auth() const;
-    bool should_skip_request_log() const;
     void close_conn_locked(bool real_close = true);
 
-    // Authentication and session management.
+    // Request-body streaming and managed download helpers.
     string make_session_token(const string &username) const;
-    string extract_bearer_token() const;
-    HTTP_CODE handle_auth_request(bool is_register, bool api_mode);
-    HTTP_CODE handle_logout_request();
-
-    // File service helpers and handlers.
-    bool write_operation_log(const string &username, const string &action, const string &resource_type,
-                             long resource_id, const string &detail);
-    HTTP_CODE handle_file_upload();
-    HTTP_CODE handle_file_upload_preflight();
-    HTTP_CODE handle_file_list();
-    HTTP_CODE handle_drive_item_list();
-    HTTP_CODE handle_drive_folder_create();
-    HTTP_CODE handle_drive_folder_delete(const char *path);
-    HTTP_CODE handle_drive_file_upload();
-    HTTP_CODE handle_public_file_list();
-    HTTP_CODE handle_public_file_detail(const char *path);
-    HTTP_CODE handle_file_download(const char *path);
-    HTTP_CODE handle_public_file_download(const char *path);
-    HTTP_CODE handle_file_share_create(const char *path);
-    HTTP_CODE handle_share_detail(const char *path);
-    HTTP_CODE handle_share_download(const char *path);
-    HTTP_CODE handle_file_delete(const char *path);
-    HTTP_CODE handle_file_visibility_update(const char *path);
-    HTTP_CODE handle_file_restore(const char *path);
-    HTTP_CODE handle_operation_list();
-    HTTP_CODE handle_operation_delete(const char *path);
     bool open_managed_file(const string &path, const string &content_type, const string &download_name);
-    bool parse_managed_upload_payload(service_files::UploadPayload &payload, int &status, const char *&title, string &message);
     bool begin_streamed_body_capture();
     bool append_streamed_body_chunk(const char *data, size_t len);
     void reset_streamed_body_buffer();
     void cleanup_temp_upload_state();
 
-    // Static resource resolution and response writing.
-    bool resolve_static_path(const char *route_path);
+    // Response writing.
     char *get_line() { return m_read_buf.empty() ? nullptr : m_read_buf.data() + m_start_line; };
     LINE_STATUS parse_line();
     void close_file();
@@ -352,6 +263,7 @@ private:
     string m_query_string_storage;
     string m_response_body_storage;
     string m_extra_headers;
+    map<string, string> m_headers;
     map<string, string> m_form_data;
     map<string, string> m_json_data;
     string m_authorization;

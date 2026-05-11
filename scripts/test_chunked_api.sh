@@ -95,7 +95,7 @@ multipart = b"".join([
 ])
 mid = len(multipart) // 2
 upload_status, upload_body = request_chunked(
-    "/api/private/files",
+    "/api/drive/files/upload",
     {
         "Authorization": f"Bearer {token}",
         "Content-Type": f"multipart/form-data; boundary={boundary}",
@@ -120,7 +120,7 @@ PY
 
 FILE_ID="$(printf '%s\n' "$CHUNKED_RESULT" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')"
 if [ -n "$FILE_ID" ]; then
-    curl -sS -X DELETE "$BASE_URL/api/private/files/$FILE_ID" -H "Authorization: Bearer $TOKEN" >/dev/null || true
+    curl -sS -X DELETE "$BASE_URL/api/drive/files/$FILE_ID" -H "Authorization: Bearer $TOKEN" >/dev/null || true
 fi
 
 echo "login: $LOGIN_RESPONSE"

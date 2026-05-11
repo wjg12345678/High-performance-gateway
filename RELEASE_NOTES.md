@@ -16,8 +16,8 @@
 
 - `GET /healthz` 在当前发布配置下可达到 `7.5k req/s` 量级
 - `GET /api/private/ping` 在 Bearer Token 鉴权链路下可达到 `7.4k req/s` 量级
-- `GET /api/private/files` 在高并发下明显受 MySQL 影响，`500~1000` 并发区间开始出现稳定 `read/timeout` 错误
-- `POST /api/login` 与 `POST /api/private/files` 仍是当前最重的两条写路径
+- `GET /api/drive/items` 在高并发下明显受 MySQL 影响，`500~1000` 并发区间开始出现稳定 `read/timeout` 错误
+- `POST /api/login` 与 `POST /api/drive/files/upload` 仍是当前最重的两条写路径
 - 在当前测试环境中，`TWS_LOG_WRITE=0` 明显优于默认异步日志模式
 
 ### Documentation Changes
@@ -31,7 +31,7 @@
 
 - `scripts/run_benchmark_suite.sh`
 - `test_pressure/login.lua`
-- `test_pressure/private_upload.lua`
+- `test_pressure/drive_upload.lua`
 
 ### Updated Files
 

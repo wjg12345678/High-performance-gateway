@@ -11,9 +11,9 @@ bool insert_user(MYSQL *mysql, const std::string &username, const std::string &p
         return false;
     }
 
-    const std::string sql = "INSERT INTO user(username, passwd, passwd_salt) VALUES('" +
+    const std::string sql = "INSERT INTO users(username, password_hash) VALUES('" +
                             escape(mysql, username) + "', '" +
-                            escape(mysql, password_record) + "', '')";
+                            escape(mysql, password_record) + "')";
     return mysql_query(mysql, sql.c_str()) == 0;
 }
 
@@ -24,8 +24,8 @@ bool fetch_user_password(MYSQL *mysql, const std::string &username, UserPassword
         return false;
     }
 
-    const std::string sql = "SELECT passwd, COALESCE(passwd_salt, '') FROM user WHERE username='" +
-                            escape(mysql, username) + "' LIMIT 1";
+    const std::string sql = "SELECT password_hash FROM users WHERE username='" +
+                            escape(mysql, username) + "' AND disabled_at IS NULL LIMIT 1";
     if (mysql_query(mysql, sql.c_str()) != 0)
     {
         return false;
@@ -45,7 +45,6 @@ bool fetch_user_password(MYSQL *mysql, const std::string &username, UserPassword
     }
 
     record.password = row[0] ? row[0] : "";
-    record.salt = row[1] ? row[1] : "";
     mysql_free_result(result);
     return true;
 }
@@ -57,8 +56,8 @@ bool update_user_password(MYSQL *mysql, const std::string &username, const std::
         return false;
     }
 
-    const std::string sql = "UPDATE user SET passwd='" + escape(mysql, password_record) +
-                            "', passwd_salt='' WHERE username='" + escape(mysql, username) + "'";
+    const std::string sql = "UPDATE users SET password_hash='" + escape(mysql, password_record) +
+                            "' WHERE username='" + escape(mysql, username) + "' AND disabled_at IS NULL";
     return mysql_query(mysql, sql.c_str()) == 0;
 }
 bool fetch_all_user_passwords(MYSQL *mysql, std::map<std::string, std::string> &users)
@@ -68,7 +67,7 @@ bool fetch_all_user_passwords(MYSQL *mysql, std::map<std::string, std::string> &
         return false;
     }
 
-    if (mysql_query(mysql, "SELECT username,passwd FROM user") != 0)
+    if (mysql_query(mysql, "SELECT username,password_hash FROM users WHERE disabled_at IS NULL") != 0)
     {
         return false;
     }
@@ -93,6 +92,18 @@ bool fetch_all_user_passwords(MYSQL *mysql, std::map<std::string, std::string> &
 
     mysql_free_result(result);
     return true;
+}
+
+bool mark_user_login(MYSQL *mysql, const std::string &username)
+{
+    if (mysql == nullptr || username.empty())
+    {
+        return false;
+    }
+
+    const std::string sql = "UPDATE users SET last_login_at=NOW() WHERE username='" +
+                            escape(mysql, username) + "' AND disabled_at IS NULL";
+    return mysql_query(mysql, sql.c_str()) == 0;
 }
 
 }

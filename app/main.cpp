@@ -1,4 +1,5 @@
 #include "config.h"
+#include "../service/rate_limit/auth_rate_limiter.h"
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>
@@ -260,6 +261,25 @@ int run_server_process(const Config &config)
     g_server_reload = 0;
     g_worker_exit_signal = 0;
     install_worker_signal_handlers();
+
+    service_rate_limit::AuthRateLimitSettings rate_limit_settings;
+    rate_limit_settings.enabled = config.auth_rate_limit_enabled != 0;
+    rate_limit_settings.redis.host = config.redis_host;
+    rate_limit_settings.redis.port = config.redis_port;
+    rate_limit_settings.redis.password = config.redis_password;
+    rate_limit_settings.redis.db = config.redis_db;
+    rate_limit_settings.redis.pool_size = config.redis_pool_size;
+    rate_limit_settings.redis.connect_timeout_ms = config.redis_connect_timeout_ms;
+    rate_limit_settings.redis.socket_timeout_ms = config.redis_socket_timeout_ms;
+    rate_limit_settings.redis.max_retries = config.redis_max_retries;
+    rate_limit_settings.login_ip.max_tokens = config.auth_login_ip_max_tokens;
+    rate_limit_settings.login_ip.refill_rate = config.auth_login_ip_refill_rate;
+    rate_limit_settings.login_user.max_tokens = config.auth_login_user_max_tokens;
+    rate_limit_settings.login_user.refill_rate = config.auth_login_user_refill_rate;
+    rate_limit_settings.register_ip.max_tokens = config.auth_register_ip_max_tokens;
+    rate_limit_settings.register_ip.refill_rate = config.auth_register_ip_refill_rate;
+    rate_limit_settings.fallback_mode = config.auth_rate_limit_fallback_mode;
+    service_rate_limit::configure_auth_rate_limiter(rate_limit_settings);
 
     WebServer server;
 

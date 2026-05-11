@@ -94,7 +94,7 @@ std::string sanitize_download_filename(const std::string &value)
 
     if (cleaned.empty() || cleaned == "." || cleaned == "..")
     {
-        return "download.txt";
+        return "download";
     }
     if (cleaned.size() > 120)
     {
@@ -121,7 +121,7 @@ std::string encode_download_filename(const std::string &value)
         snprintf(buffer, sizeof(buffer), "%%%02X", ch);
         encoded += buffer;
     }
-    return encoded.empty() ? "download.txt" : encoded;
+    return encoded.empty() ? "download" : encoded;
 }
 
 std::string file_storage_root(const std::string &doc_root)

@@ -47,38 +47,11 @@ bool fetch_page_ids(MYSQL *mysql, const std::string &sql, long limit, PageIds &p
     mysql_free_result(result);
     return true;
 }
-}
 
-bool fetch_file_record(MYSQL *mysql, long file_id, ManagedFileRecord &record, bool include_deleted)
+bool fill_file_record_from_row(MYSQL_ROW row, long file_id, ManagedFileRecord &record)
 {
-    if (mysql == nullptr)
-    {
-        return false;
-    }
-
-    char query[1024];
-    snprintf(query, sizeof(query),
-             "SELECT f.owner_username, COALESCE(NULLIF(p.stored_name, ''), f.stored_name), f.original_name, f.content_type, f.file_size, f.is_public, "
-             "COALESCE(f.content_sha256, ''), COALESCE(DATE_FORMAT(f.deleted_at, '%%Y-%%m-%%d %%H:%%i:%%s'), ''), "
-             "COALESCE(f.folder_id, 0), COALESCE(f.physical_id, 0) "
-             "FROM files f LEFT JOIN physical_files p ON f.physical_id=p.id WHERE f.id=%ld%s LIMIT 1",
-             file_id,
-             include_deleted ? "" : " AND f.deleted_at IS NULL");
-    if (mysql_query(mysql, query) != 0)
-    {
-        return false;
-    }
-
-    MYSQL_RES *result = mysql_store_result(mysql);
-    if (result == nullptr)
-    {
-        return false;
-    }
-
-    MYSQL_ROW row = mysql_fetch_row(result);
     if (row == nullptr)
     {
-        mysql_free_result(result);
         return false;
     }
 
@@ -94,24 +67,73 @@ bool fetch_file_record(MYSQL *mysql, long file_id, ManagedFileRecord &record, bo
     record.folder_id = row[8] ? atol(row[8]) : 0;
     record.physical_id = row[9] ? atol(row[9]) : 0;
     record.is_deleted = !record.deleted_at.empty();
-    mysql_free_result(result);
     return true;
 }
 
-unsigned int last_errno(MYSQL *mysql)
+bool fetch_file_record_impl(MYSQL *mysql, long file_id, ManagedFileRecord &record,
+                            bool include_deleted, bool for_update)
 {
-    return mysql == nullptr ? 0 : mysql_errno(mysql);
+    if (mysql == nullptr)
+    {
+        return false;
+    }
+
+    char query[1100];
+    snprintf(query, sizeof(query),
+             "SELECT u.username, COALESCE(NULLIF(p.stored_name, ''), f.stored_name), f.original_name, f.content_type, f.file_size, f.is_public, "
+             "COALESCE(f.content_sha256, ''), COALESCE(DATE_FORMAT(f.deleted_at, '%%Y-%%m-%%d %%H:%%i:%%s'), ''), "
+             "COALESCE(f.folder_id, 0), f.physical_id "
+             "FROM files f JOIN users u ON u.id=f.user_id "
+             "JOIN physical_files p ON f.physical_id=p.id WHERE f.id=%ld%s LIMIT 1%s",
+             file_id,
+             include_deleted ? "" : " AND f.deleted_at IS NULL",
+             for_update ? " FOR UPDATE" : "");
+    if (mysql_query(mysql, query) != 0)
+    {
+        return false;
+    }
+
+    MYSQL_RES *result = mysql_store_result(mysql);
+    if (result == nullptr)
+    {
+        return false;
+    }
+
+    MYSQL_ROW row = mysql_fetch_row(result);
+    const bool found = fill_file_record_from_row(row, file_id, record);
+    mysql_free_result(result);
+    return found;
 }
 
-bool fetch_physical_file_by_sha256(MYSQL *mysql, const std::string &sha256, PhysicalFileRecord &record)
+bool fill_physical_record_from_row(MYSQL_ROW row, PhysicalFileRecord &record)
+{
+    if (row == nullptr)
+    {
+        return false;
+    }
+
+    record.id = row[0] ? atol(row[0]) : 0;
+    record.sha256 = row[1] ? row[1] : "";
+    record.stored_name = row[2] ? row[2] : "";
+    record.file_size = row[3] ? atol(row[3]) : 0;
+    record.ref_count = row[4] ? atol(row[4]) : 0;
+    return record.id > 0 && !record.stored_name.empty();
+}
+
+bool fetch_physical_file_by_sha256_impl(MYSQL *mysql, const std::string &sha256,
+                                        PhysicalFileRecord &record, bool for_update)
 {
     if (mysql == nullptr || sha256.empty())
     {
         return false;
     }
 
-    const std::string sql = "SELECT id, sha256, stored_name, file_size, ref_count FROM physical_files WHERE sha256='" +
-                            escape(mysql, sha256) + "' LIMIT 1";
+    std::string sql = "SELECT id, sha256, stored_name, file_size, ref_count FROM physical_files WHERE sha256='" +
+                      escape(mysql, sha256) + "' LIMIT 1";
+    if (for_update)
+    {
+        sql += " FOR UPDATE";
+    }
     if (mysql_query(mysql, sql.c_str()) != 0)
     {
         return false;
@@ -124,19 +146,61 @@ bool fetch_physical_file_by_sha256(MYSQL *mysql, const std::string &sha256, Phys
     }
 
     MYSQL_ROW row = mysql_fetch_row(result);
-    if (row == nullptr)
+    const bool found = fill_physical_record_from_row(row, record);
+    mysql_free_result(result);
+    return found;
+}
+}
+
+bool fetch_file_record(MYSQL *mysql, long file_id, ManagedFileRecord &record, bool include_deleted)
+{
+    return fetch_file_record_impl(mysql, file_id, record, include_deleted, false);
+}
+
+bool fetch_file_record_for_update(MYSQL *mysql, long file_id, ManagedFileRecord &record, bool include_deleted)
+{
+    return fetch_file_record_impl(mysql, file_id, record, include_deleted, true);
+}
+
+unsigned int last_errno(MYSQL *mysql)
+{
+    return mysql == nullptr ? 0 : mysql_errno(mysql);
+}
+
+bool lock_user_for_update(MYSQL *mysql, const std::string &owner)
+{
+    if (mysql == nullptr || owner.empty())
     {
-        mysql_free_result(result);
         return false;
     }
 
-    record.id = row[0] ? atol(row[0]) : 0;
-    record.sha256 = row[1] ? row[1] : "";
-    record.stored_name = row[2] ? row[2] : "";
-    record.file_size = row[3] ? atol(row[3]) : 0;
-    record.ref_count = row[4] ? atol(row[4]) : 0;
+    const std::string sql = "SELECT id FROM users WHERE username='" + escape(mysql, owner) +
+                            "' AND disabled_at IS NULL LIMIT 1 FOR UPDATE";
+    if (mysql_query(mysql, sql.c_str()) != 0)
+    {
+        return false;
+    }
+
+    MYSQL_RES *result = mysql_store_result(mysql);
+    if (result == nullptr)
+    {
+        return false;
+    }
+
+    const bool found = mysql_fetch_row(result) != nullptr;
     mysql_free_result(result);
-    return record.id > 0 && !record.stored_name.empty();
+    return found;
+}
+
+bool fetch_physical_file_by_sha256(MYSQL *mysql, const std::string &sha256, PhysicalFileRecord &record)
+{
+    return fetch_physical_file_by_sha256_impl(mysql, sha256, record, false);
+}
+
+bool fetch_physical_file_by_sha256_for_update(MYSQL *mysql, const std::string &sha256,
+                                              PhysicalFileRecord &record)
+{
+    return fetch_physical_file_by_sha256_impl(mysql, sha256, record, true);
 }
 
 bool insert_physical_file(MYSQL *mysql, const PhysicalFileRecord &record, long &physical_id)
@@ -148,11 +212,10 @@ bool insert_physical_file(MYSQL *mysql, const PhysicalFileRecord &record, long &
 
     char sql[1024];
     snprintf(sql, sizeof(sql),
-             "INSERT INTO physical_files(sha256, stored_name, file_size, ref_count) VALUES('%s', '%s', %ld, %ld)",
+             "INSERT INTO physical_files(sha256, stored_name, file_size, ref_count) VALUES('%s', '%s', %ld, 0)",
              escape(mysql, record.sha256).c_str(),
              escape(mysql, record.stored_name).c_str(),
-             record.file_size,
-             record.ref_count);
+             record.file_size);
     if (mysql_query(mysql, sql) != 0)
     {
         return false;
@@ -162,34 +225,34 @@ bool insert_physical_file(MYSQL *mysql, const PhysicalFileRecord &record, long &
     return true;
 }
 
-bool increment_physical_ref(MYSQL *mysql, long physical_id)
-{
-    if (mysql == nullptr || physical_id <= 0)
-    {
-        return false;
-    }
-    const std::string sql = "UPDATE physical_files SET ref_count=ref_count+1 WHERE id=" + std::to_string(physical_id);
-    return mysql_query(mysql, sql.c_str()) == 0;
-}
-
-bool decrement_physical_ref(MYSQL *mysql, long physical_id)
-{
-    if (mysql == nullptr || physical_id <= 0)
-    {
-        return true;
-    }
-    const std::string sql = "UPDATE physical_files SET ref_count=GREATEST(ref_count-1, 0) WHERE id=" + std::to_string(physical_id);
-    return mysql_query(mysql, sql.c_str()) == 0;
-}
-
 bool delete_physical_file_if_unreferenced(MYSQL *mysql, long physical_id)
 {
     if (mysql == nullptr || physical_id <= 0)
     {
         return true;
     }
-    const std::string sql = "DELETE FROM physical_files WHERE id=" + std::to_string(physical_id) + " AND ref_count=0";
+    const std::string sql = "DELETE FROM physical_files WHERE id=" + std::to_string(physical_id) +
+                            " AND ref_count=0 AND NOT EXISTS "
+                            "(SELECT 1 FROM files WHERE physical_id=" + std::to_string(physical_id) + ")";
     return mysql_query(mysql, sql.c_str()) == 0;
+}
+
+bool delete_physical_file_if_unreferenced(MYSQL *mysql, long physical_id, bool &deleted)
+{
+    deleted = false;
+    if (mysql == nullptr || physical_id <= 0)
+    {
+        return true;
+    }
+    const std::string sql = "DELETE FROM physical_files WHERE id=" + std::to_string(physical_id) +
+                            " AND ref_count=0 AND NOT EXISTS "
+                            "(SELECT 1 FROM files WHERE physical_id=" + std::to_string(physical_id) + ")";
+    if (mysql_query(mysql, sql.c_str()) != 0)
+    {
+        return false;
+    }
+    deleted = mysql_affected_rows(mysql) > 0;
+    return true;
 }
 
 bool original_name_exists(MYSQL *mysql, const std::string &owner, const std::string &original_name,
@@ -200,9 +263,9 @@ bool original_name_exists(MYSQL *mysql, const std::string &owner, const std::str
         return false;
     }
 
-    std::string sql = "SELECT id FROM files WHERE owner_username='" + escape(mysql, owner) +
-                      "' AND original_name='" + escape(mysql, original_name) +
-                      "' AND folder_id=" + std::to_string(folder_id) +
+    std::string sql = "SELECT id FROM files WHERE user_id=" + user_id_subquery(mysql, owner) +
+                      " AND original_name='" + escape(mysql, original_name) +
+                      "' AND " + nullable_id_condition("folder_id", folder_id) +
                       " AND deleted_at IS NULL";
     if (ignore_file_id > 0)
     {
@@ -235,22 +298,26 @@ bool insert_file(MYSQL *mysql, const FileCreateRecord &record, long &file_id)
 
     char sql[2048];
     snprintf(sql, sizeof(sql),
-             "INSERT INTO files(owner_username, stored_name, physical_id, original_name, content_type, folder_id, file_size, is_public, content_sha256) "
-             "VALUES('%s', '%s', %ld, '%s', '%s', %ld, %ld, %d, '%s')",
-             escape(mysql, record.owner).c_str(),
+             "INSERT INTO files(user_id, stored_name, physical_id, original_name, content_type, folder_id, file_size, is_public, content_sha256) "
+             "SELECT id, '%s', %ld, '%s', '%s', %s, %ld, %d, '%s' FROM users WHERE username='%s' AND disabled_at IS NULL",
              escape(mysql, record.stored_name).c_str(),
              record.physical_id,
              escape(mysql, record.original_name).c_str(),
              escape(mysql, record.content_type).c_str(),
-             record.folder_id,
+             nullable_id_value(record.folder_id).c_str(),
              record.file_size,
              record.is_public ? 1 : 0,
-             escape(mysql, record.sha256).c_str());
+             escape(mysql, record.sha256).c_str(),
+             escape(mysql, record.owner).c_str());
     if (mysql_query(mysql, sql) != 0)
     {
         return false;
     }
 
+    if (mysql_affected_rows(mysql) == 0)
+    {
+        return false;
+    }
     file_id = static_cast<long>(mysql_insert_id(mysql));
     return true;
 }
@@ -263,8 +330,8 @@ bool fetch_user_storage_usage(MYSQL *mysql, const std::string &owner, long &used
         return false;
     }
 
-    const std::string sql = "SELECT COALESCE(SUM(file_size), 0) FROM files WHERE owner_username='" +
-                            escape(mysql, owner) + "'";
+    const std::string sql = "SELECT COALESCE(SUM(file_size), 0) FROM files WHERE user_id=" +
+                            user_id_subquery(mysql, owner);
     if (mysql_query(mysql, sql.c_str()) != 0)
     {
         return false;
@@ -299,8 +366,8 @@ bool folder_exists(MYSQL *mysql, const std::string &owner, long folder_id, bool 
     }
 
     const std::string sql = "SELECT id FROM folders WHERE id=" + std::to_string(folder_id) +
-                            " AND owner_username='" + escape(mysql, owner) +
-                            "' AND deleted_at IS NULL LIMIT 1";
+                            " AND user_id=" + user_id_subquery(mysql, owner) +
+                            " AND deleted_at IS NULL LIMIT 1";
     if (mysql_query(mysql, sql.c_str()) != 0)
     {
         return false;
@@ -325,8 +392,8 @@ bool folder_name_exists(MYSQL *mysql, const std::string &owner, long parent_id,
         return false;
     }
 
-    const std::string sql = "SELECT id FROM folders WHERE owner_username='" + escape(mysql, owner) +
-                            "' AND parent_id=" + std::to_string(parent_id) +
+    const std::string sql = "SELECT id FROM folders WHERE user_id=" + user_id_subquery(mysql, owner) +
+                            " AND " + nullable_id_condition("parent_id", parent_id) +
                             " AND name='" + escape(mysql, name) +
                             "' AND deleted_at IS NULL LIMIT 1";
     if (mysql_query(mysql, sql.c_str()) != 0)
@@ -352,10 +419,15 @@ bool insert_folder(MYSQL *mysql, const FolderCreateRecord &record, long &folder_
         return false;
     }
 
-    const std::string sql = "INSERT INTO folders(owner_username, parent_id, name) VALUES('" +
-                            escape(mysql, record.owner) + "', " + std::to_string(record.parent_id) +
-                            ", '" + escape(mysql, record.name) + "')";
+    const std::string sql = "INSERT INTO folders(user_id, parent_id, name) "
+                            "SELECT id, " + nullable_id_value(record.parent_id) + ", '" +
+                            escape(mysql, record.name) + "' FROM users WHERE username='" +
+                            escape(mysql, record.owner) + "' AND disabled_at IS NULL";
     if (mysql_query(mysql, sql.c_str()) != 0)
+    {
+        return false;
+    }
+    if (mysql_affected_rows(mysql) == 0)
     {
         return false;
     }
@@ -371,10 +443,10 @@ bool fetch_folder(MYSQL *mysql, const std::string &owner, long folder_id, Folder
         return false;
     }
 
-    const std::string sql = "SELECT id, parent_id, name, DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s') "
+    const std::string sql = "SELECT id, COALESCE(parent_id, 0), name, DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s') "
                             "FROM folders WHERE id=" + std::to_string(folder_id) +
-                            " AND owner_username='" + escape(mysql, owner) +
-                            "' AND deleted_at IS NULL LIMIT 1";
+                            " AND user_id=" + user_id_subquery(mysql, owner) +
+                            " AND deleted_at IS NULL LIMIT 1";
     if (mysql_query(mysql, sql.c_str()) != 0)
     {
         return false;
@@ -409,8 +481,8 @@ bool folder_has_active_children(MYSQL *mysql, const std::string &owner, long fol
         return false;
     }
 
-    const std::string folder_sql = "SELECT id FROM folders WHERE owner_username='" + escape(mysql, owner) +
-                                   "' AND parent_id=" + std::to_string(folder_id) +
+    const std::string folder_sql = "SELECT id FROM folders WHERE user_id=" + user_id_subquery(mysql, owner) +
+                                   " AND parent_id=" + std::to_string(folder_id) +
                                    " AND deleted_at IS NULL LIMIT 1";
     if (mysql_query(mysql, folder_sql.c_str()) != 0)
     {
@@ -428,8 +500,8 @@ bool folder_has_active_children(MYSQL *mysql, const std::string &owner, long fol
         return true;
     }
 
-    const std::string file_sql = "SELECT id FROM files WHERE owner_username='" + escape(mysql, owner) +
-                                 "' AND folder_id=" + std::to_string(folder_id) +
+    const std::string file_sql = "SELECT id FROM files WHERE user_id=" + user_id_subquery(mysql, owner) +
+                                 " AND folder_id=" + std::to_string(folder_id) +
                                  " AND deleted_at IS NULL LIMIT 1";
     if (mysql_query(mysql, file_sql.c_str()) != 0)
     {
@@ -453,8 +525,8 @@ bool soft_delete_folder(MYSQL *mysql, const std::string &owner, long folder_id)
     }
 
     const std::string sql = "UPDATE folders SET deleted_at=NOW(), deleted_marker=id WHERE id=" +
-                            std::to_string(folder_id) + " AND owner_username='" + escape(mysql, owner) +
-                            "' AND deleted_at IS NULL";
+                            std::to_string(folder_id) + " AND user_id=" + user_id_subquery(mysql, owner) +
+                            " AND deleted_at IS NULL";
     return mysql_query(mysql, sql.c_str()) == 0 && mysql_affected_rows(mysql) > 0;
 }
 
@@ -467,9 +539,9 @@ bool fetch_drive_folders(MYSQL *mysql, const std::string &owner, long parent_id,
         return false;
     }
 
-    const std::string sql = "SELECT id, parent_id, name, DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s') "
-                            "FROM folders WHERE owner_username='" + escape(mysql, owner) +
-                            "' AND parent_id=" + std::to_string(parent_id) +
+    const std::string sql = "SELECT id, COALESCE(parent_id, 0), name, DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s') "
+                            "FROM folders WHERE user_id=" + user_id_subquery(mysql, owner) +
+                            " AND " + nullable_id_condition("parent_id", parent_id) +
                             " AND deleted_at IS NULL ORDER BY name ASC, id ASC";
     if (mysql_query(mysql, sql.c_str()) != 0)
     {
@@ -506,10 +578,10 @@ bool fetch_drive_files(MYSQL *mysql, const std::string &owner, long folder_id,
         return false;
     }
 
-    const std::string sql = "SELECT id, folder_id, original_name, content_type, file_size, "
+    const std::string sql = "SELECT id, COALESCE(folder_id, 0), original_name, content_type, file_size, "
                             "DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s'), is_public "
-                            "FROM files WHERE owner_username='" + escape(mysql, owner) +
-                            "' AND folder_id=" + std::to_string(folder_id) +
+                            "FROM files WHERE user_id=" + user_id_subquery(mysql, owner) +
+                            " AND " + nullable_id_condition("folder_id", folder_id) +
                             " AND deleted_at IS NULL ORDER BY original_name ASC, id ASC";
     if (mysql_query(mysql, sql.c_str()) != 0)
     {
@@ -540,23 +612,84 @@ bool fetch_drive_files(MYSQL *mysql, const std::string &owner, long folder_id,
     return true;
 }
 
-bool fetch_private_file_page_ids(MYSQL *mysql, const std::string &owner, bool include_deleted,
-                                 long cursor, long limit, PageIds &page)
+bool fetch_trash_files(MYSQL *mysql, const std::string &owner, std::vector<FileListItem> &items)
 {
-    if (mysql == nullptr || owner.empty() || limit <= 0)
+    items.clear();
+    if (mysql == nullptr || owner.empty())
     {
         return false;
     }
 
-    std::string sql = "SELECT id FROM files FORCE INDEX(idx_owner_deleted_id) WHERE owner_username='" +
-                      escape(mysql, owner) + "'";
-    sql += include_deleted ? " AND deleted_at IS NOT NULL" : " AND deleted_at IS NULL";
-    if (cursor > 0)
+    const std::string sql = "SELECT id, COALESCE(folder_id, 0), original_name, content_type, file_size, "
+                            "DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s'), "
+                            "DATE_FORMAT(deleted_at, '%Y-%m-%d %H:%i:%s') "
+                            "FROM files FORCE INDEX(idx_user_deleted_id) WHERE user_id=" +
+                            user_id_subquery(mysql, owner) +
+                            " AND deleted_at IS NOT NULL ORDER BY deleted_at DESC, id DESC";
+    if (mysql_query(mysql, sql.c_str()) != 0)
     {
-        sql += " AND id<" + std::to_string(cursor);
+        return false;
     }
-    sql += " ORDER BY id DESC LIMIT " + std::to_string(limit + 1);
-    return fetch_page_ids(mysql, sql, limit, page);
+
+    MYSQL_RES *result = mysql_store_result(mysql);
+    if (result == nullptr)
+    {
+        return false;
+    }
+
+    MYSQL_ROW row = nullptr;
+    while ((row = mysql_fetch_row(result)) != nullptr)
+    {
+        FileListItem item;
+        item.id = row[0] ? atol(row[0]) : 0;
+        item.folder_id = row[1] ? atol(row[1]) : 0;
+        item.filename = row[2] ? row[2] : "";
+        item.content_type = row[3] ? row[3] : "";
+        item.size = row[4] ? atol(row[4]) : 0;
+        item.created_at = row[5] ? row[5] : "";
+        item.deleted_at = row[6] ? row[6] : "";
+        item.is_public = false;
+        items.push_back(item);
+    }
+
+    mysql_free_result(result);
+    return true;
+}
+
+bool fetch_trash_file_ids(MYSQL *mysql, const std::string &owner, std::vector<long> &ids)
+{
+    ids.clear();
+    if (mysql == nullptr || owner.empty())
+    {
+        return false;
+    }
+
+    const std::string sql = "SELECT id FROM files FORCE INDEX(idx_user_deleted_id) "
+                            "WHERE user_id=" + user_id_subquery(mysql, owner) +
+                            " AND deleted_at IS NOT NULL ORDER BY deleted_at DESC, id DESC";
+    if (mysql_query(mysql, sql.c_str()) != 0)
+    {
+        return false;
+    }
+
+    MYSQL_RES *result = mysql_store_result(mysql);
+    if (result == nullptr)
+    {
+        return false;
+    }
+
+    MYSQL_ROW row = nullptr;
+    while ((row = mysql_fetch_row(result)) != nullptr)
+    {
+        const long id = row[0] ? atol(row[0]) : 0;
+        if (id > 0)
+        {
+            ids.push_back(id);
+        }
+    }
+
+    mysql_free_result(result);
+    return true;
 }
 
 bool fetch_public_file_page_ids(MYSQL *mysql, long cursor, long limit, PageIds &page)
@@ -575,52 +708,6 @@ bool fetch_public_file_page_ids(MYSQL *mysql, long cursor, long limit, PageIds &
     return fetch_page_ids(mysql, sql, limit, page);
 }
 
-bool fetch_private_file_list(MYSQL *mysql, const std::vector<long> &ids, std::vector<FileListItem> &items)
-{
-    items.clear();
-    if (mysql == nullptr)
-    {
-        return false;
-    }
-    if (ids.empty())
-    {
-        return true;
-    }
-
-    const std::string sql = "SELECT id, original_name, content_type, file_size, "
-                            "DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s'), is_public, folder_id, "
-                            "COALESCE(DATE_FORMAT(deleted_at, '%Y-%m-%d %H:%i:%s'), '') "
-                            "FROM files WHERE id IN (" + join_numeric_ids(ids) + ") ORDER BY id DESC";
-    if (mysql_query(mysql, sql.c_str()) != 0)
-    {
-        return false;
-    }
-
-    MYSQL_RES *result = mysql_store_result(mysql);
-    if (result == nullptr)
-    {
-        return false;
-    }
-
-    MYSQL_ROW row = nullptr;
-    while ((row = mysql_fetch_row(result)) != nullptr)
-    {
-        FileListItem item;
-        item.id = row[0] ? atol(row[0]) : 0;
-        item.filename = row[1] ? row[1] : "";
-        item.content_type = row[2] ? row[2] : "";
-        item.size = row[3] ? atol(row[3]) : 0;
-        item.created_at = row[4] ? row[4] : "";
-        item.is_public = row[5] ? atoi(row[5]) != 0 : false;
-        item.folder_id = row[6] ? atol(row[6]) : 0;
-        item.deleted_at = row[7] ? row[7] : "";
-        items.push_back(item);
-    }
-
-    mysql_free_result(result);
-    return true;
-}
-
 bool fetch_public_file_list(MYSQL *mysql, const std::vector<long> &ids, std::vector<FileListItem> &items)
 {
     items.clear();
@@ -633,9 +720,10 @@ bool fetch_public_file_list(MYSQL *mysql, const std::vector<long> &ids, std::vec
         return true;
     }
 
-    const std::string sql = "SELECT id, original_name, content_type, file_size, "
-                            "DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s'), owner_username "
-                            "FROM files WHERE id IN (" + join_numeric_ids(ids) + ") ORDER BY id DESC";
+    const std::string sql = "SELECT f.id, f.original_name, f.content_type, f.file_size, "
+                            "DATE_FORMAT(f.created_at, '%Y-%m-%d %H:%i:%s'), u.username "
+                            "FROM files f JOIN users u ON u.id=f.user_id "
+                            "WHERE f.id IN (" + join_numeric_ids(ids) + ") ORDER BY f.id DESC";
     if (mysql_query(mysql, sql.c_str()) != 0)
     {
         return false;
@@ -671,9 +759,38 @@ bool soft_delete_file(MYSQL *mysql, long file_id)
         return false;
     }
 
-    const std::string sql = "UPDATE files SET deleted_at=NOW(), is_public=0 WHERE id=" +
+    const std::string sql = "UPDATE files SET deleted_at=NOW(), deleted_marker=id, is_public=0 WHERE id=" +
                             std::to_string(file_id) + " AND deleted_at IS NULL";
     return mysql_query(mysql, sql.c_str()) == 0;
+}
+
+bool restore_file(MYSQL *mysql, const std::string &owner, long file_id, long folder_id,
+                  const std::string &original_name)
+{
+    if (mysql == nullptr || owner.empty() || file_id <= 0 || folder_id < 0 || original_name.empty())
+    {
+        return false;
+    }
+
+    const std::string sql = "UPDATE files SET deleted_at=NULL, deleted_marker=0, folder_id=" + nullable_id_value(folder_id) +
+                            ", original_name='" + escape(mysql, original_name) +
+                            "', is_public=0 WHERE id=" + std::to_string(file_id) +
+                            " AND user_id=" + user_id_subquery(mysql, owner) +
+                            " AND deleted_at IS NOT NULL";
+    return mysql_query(mysql, sql.c_str()) == 0 && mysql_affected_rows(mysql) > 0;
+}
+
+bool hard_delete_file(MYSQL *mysql, const std::string &owner, long file_id)
+{
+    if (mysql == nullptr || owner.empty() || file_id <= 0)
+    {
+        return false;
+    }
+
+    const std::string sql = "DELETE FROM files WHERE id=" + std::to_string(file_id) +
+                            " AND user_id=" + user_id_subquery(mysql, owner) +
+                            " AND deleted_at IS NOT NULL";
+    return mysql_query(mysql, sql.c_str()) == 0 && mysql_affected_rows(mysql) > 0;
 }
 
 bool update_file_visibility(MYSQL *mysql, long file_id, bool is_public)
@@ -688,39 +805,9 @@ bool update_file_visibility(MYSQL *mysql, long file_id, bool is_public)
     return mysql_query(mysql, sql.c_str()) == 0;
 }
 
-bool restore_file(MYSQL *mysql, long file_id, const std::string &restored_name)
-{
-    if (mysql == nullptr || restored_name.empty())
-    {
-        return false;
-    }
-
-    const std::string sql = "UPDATE files SET deleted_at=NULL, is_public=0, original_name='" +
-                            escape(mysql, restored_name) + "' WHERE id=" + std::to_string(file_id);
-    return mysql_query(mysql, sql.c_str()) == 0;
-}
 bool ensure_file_shares_table(MYSQL *mysql)
 {
-    if (mysql == nullptr)
-    {
-        return false;
-    }
-
-    const std::string sql =
-        "CREATE TABLE IF NOT EXISTS file_shares ("
-        "token VARCHAR(64) NOT NULL,"
-        "file_id BIGINT NOT NULL,"
-        "owner_username VARCHAR(50) NOT NULL,"
-        "access_code_hash CHAR(64) NOT NULL DEFAULT '',"
-        "expires_at TIMESTAMP NULL DEFAULT NULL,"
-        "max_downloads BIGINT NOT NULL DEFAULT 0,"
-        "download_count BIGINT NOT NULL DEFAULT 0,"
-        "created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,"
-        "PRIMARY KEY (token),"
-        "KEY idx_file_id (file_id),"
-        "KEY idx_owner_created (owner_username, created_at)"
-        ") ENGINE=InnoDB";
-    return mysql_query(mysql, sql.c_str()) == 0;
+    return mysql != nullptr;
 }
 
 bool insert_file_share(MYSQL *mysql, const FileShareCreateRecord &record)
@@ -741,11 +828,13 @@ bool insert_file_share(MYSQL *mysql, const FileShareCreateRecord &record)
         expires_sql = "DATE_ADD(NOW(), INTERVAL " + std::to_string(record.expires_in_seconds) + " SECOND)";
     }
 
-    const std::string sql = "INSERT INTO file_shares(token, file_id, owner_username, access_code_hash, expires_at, max_downloads) VALUES('" +
-                            escape(mysql, record.token) + "', " + std::to_string(record.file_id) + ", '" +
-                            escape(mysql, record.owner) + "', '" + escape(mysql, record.access_code_hash) + "', " +
-                            expires_sql + ", " + std::to_string(record.max_downloads) + ")";
-    return mysql_query(mysql, sql.c_str()) == 0;
+    const std::string sql = "INSERT INTO file_shares(token, file_id, user_id, access_code_hash, expires_at, max_downloads) "
+                            "SELECT '" + escape(mysql, record.token) + "', " + std::to_string(record.file_id) +
+                            ", id, '" + escape(mysql, record.access_code_hash) + "', " +
+                            expires_sql + ", " + std::to_string(record.max_downloads) +
+                            " FROM users WHERE username='" + escape(mysql, record.owner) +
+                            "' AND disabled_at IS NULL";
+    return mysql_query(mysql, sql.c_str()) == 0 && mysql_affected_rows(mysql) > 0;
 }
 
 bool fetch_file_share(MYSQL *mysql, const std::string &token, FileShareRecord &record)
@@ -760,13 +849,14 @@ bool fetch_file_share(MYSQL *mysql, const std::string &token, FileShareRecord &r
     }
 
     const std::string sql =
-        "SELECT s.token, s.file_id, s.owner_username, s.access_code_hash, "
+        "SELECT s.token, s.file_id, su.username, s.access_code_hash, "
         "COALESCE(DATE_FORMAT(s.expires_at, '%Y-%m-%d %H:%i:%s'), ''), "
         "s.max_downloads, s.download_count, (s.expires_at IS NOT NULL AND s.expires_at<=NOW()), "
-        "f.folder_id, f.file_size, f.is_public, f.deleted_at IS NOT NULL, f.owner_username, "
+        "COALESCE(f.folder_id, 0), f.file_size, f.is_public, f.deleted_at IS NOT NULL, fu.username, "
         "f.stored_name, f.original_name, f.content_type, f.content_sha256, "
         "COALESCE(DATE_FORMAT(f.deleted_at, '%Y-%m-%d %H:%i:%s'), '') "
-        "FROM file_shares s JOIN files f ON f.id=s.file_id "
+        "FROM file_shares s JOIN users su ON su.id=s.user_id "
+        "JOIN files f ON f.id=s.file_id JOIN users fu ON fu.id=f.user_id "
         "WHERE s.token='" + escape(mysql, token) + "' LIMIT 1";
     if (mysql_query(mysql, sql.c_str()) != 0)
     {

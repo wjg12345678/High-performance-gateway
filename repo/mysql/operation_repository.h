@@ -23,6 +23,7 @@ bool insert_operation_log(MYSQL *mysql, const std::string &username, const std::
                           const std::string &resource_type, long resource_id, const std::string &detail);
 bool fetch_recent_operations(MYSQL *mysql, const std::string &username, std::vector<OperationLogItem> &items);
 bool delete_operation_log(MYSQL *mysql, const std::string &username, long operation_id, bool &deleted);
+bool delete_user_operation_logs(MYSQL *mysql, const std::string &username, long &deleted_count);
 }
 
 #endif

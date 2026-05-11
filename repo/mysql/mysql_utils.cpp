@@ -34,4 +34,35 @@ std::string join_numeric_ids(const std::vector<long> &ids)
     }
     return joined;
 }
+
+std::string user_id_subquery(MYSQL *mysql, const std::string &username)
+{
+    return "(SELECT id FROM users WHERE username='" + escape(mysql, username) +
+           "' AND disabled_at IS NULL)";
+}
+
+std::string nullable_id_value(long id)
+{
+    return id > 0 ? std::to_string(id) : "NULL";
+}
+
+std::string nullable_id_condition(const std::string &column, long id)
+{
+    return id > 0 ? column + "=" + std::to_string(id) : column + " IS NULL";
+}
+
+bool begin_transaction(MYSQL *mysql)
+{
+    return mysql != nullptr && mysql_query(mysql, "START TRANSACTION") == 0;
+}
+
+bool commit_transaction(MYSQL *mysql)
+{
+    return mysql != nullptr && mysql_query(mysql, "COMMIT") == 0;
+}
+
+bool rollback_transaction(MYSQL *mysql)
+{
+    return mysql != nullptr && mysql_query(mysql, "ROLLBACK") == 0;
+}
 }

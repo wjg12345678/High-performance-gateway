@@ -6,16 +6,24 @@
 
 namespace service_auth
 {
+enum class AuthError
+{
+    None,
+    Unauthorized,
+    NotFound,
+    Conflict,
+    Internal
+};
+
 struct AuthResult
 {
     bool success;
-    int status;
-    const char *title;
+    AuthError error;
     std::string message;
     std::string token;
     int expires_in;
 
-    AuthResult() : success(false), status(500), title("Internal Error"), expires_in(0) {}
+    AuthResult() : success(false), error(AuthError::Internal), expires_in(0) {}
 };
 
 bool is_truthy_value(const std::string &value);

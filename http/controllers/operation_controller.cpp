@@ -80,52 +80,84 @@ string build_operation_list_json(const vector<repo_mysql::OperationLogItem> &ope
 
 namespace http_controllers
 {
-HttpConnection::HTTP_CODE OperationController::list(HttpConnection &conn)
+http_core::HttpCode OperationController::list(const http_core::HttpRequest &request,
+                                              http_core::RequestContext &context,
+                                              http_core::HttpResponse &response)
 {
-    HttpConnection::HTTP_CODE auth_code = conn.require_user_session("operation list requires user session");
-    if (auth_code != HttpConnection::NO_REQUEST)
+    (void)request;
+    if (context.current_user.empty())
     {
-        return auth_code;
+        response.set_json_error(403, "Forbidden", "operation list requires user session");
+        return http_core::MEMORY_REQUEST;
     }
 
     vector<repo_mysql::OperationLogItem> operations;
-    if (!repo_mysql::fetch_recent_operations(conn.mysql, conn.m_current_user, operations))
+    if (!repo_mysql::fetch_recent_operations(context.mysql, context.current_user, operations))
     {
-        return HttpConnection::INTERNAL_ERROR;
+        return http_core::INTERNAL_ERROR;
     }
 
     string body = build_operation_list_json(operations);
-    conn.set_memory_response(200, "OK", body, "application/json");
-    return HttpConnection::MEMORY_REQUEST;
+    response.set_body(200, "OK", body, "application/json");
+    return http_core::MEMORY_REQUEST;
 }
 
-HttpConnection::HTTP_CODE OperationController::remove(HttpConnection &conn, const char *path)
+http_core::HttpCode OperationController::remove(const http_core::HttpRequest &request,
+                                                http_core::RequestContext &context,
+                                                http_core::HttpResponse &response,
+                                                const char *path)
 {
-    HttpConnection::HTTP_CODE auth_code = conn.require_user_session("operation delete requires user session");
-    if (auth_code != HttpConnection::NO_REQUEST)
+    (void)request;
+    if (context.current_user.empty())
     {
-        return auth_code;
+        response.set_json_error(403, "Forbidden", "operation delete requires user session");
+        return http_core::MEMORY_REQUEST;
     }
 
     char *endptr = nullptr;
     long operation_id = strtol(path, &endptr, 10);
     if (endptr == path || *endptr != '\0')
     {
-        return HttpConnection::BAD_REQUEST;
+        return http_core::BAD_REQUEST;
     }
 
     bool deleted = false;
-    if (!repo_mysql::delete_operation_log(conn.mysql, conn.m_current_user, operation_id, deleted))
+    if (!repo_mysql::delete_operation_log(context.mysql, context.current_user, operation_id, deleted))
     {
-        return HttpConnection::INTERNAL_ERROR;
+        return http_core::INTERNAL_ERROR;
     }
 
     if (!deleted)
     {
-        return conn.respond_json_error(404, "Not Found", "operation log not found");
+        response.set_json_error(404, "Not Found", "operation log not found");
+        return http_core::MEMORY_REQUEST;
     }
 
-    conn.set_memory_response(200, "OK", "{\"code\":0,\"message\":\"delete success\"}", "application/json");
-    return HttpConnection::MEMORY_REQUEST;
+    response.set_body(200, "OK", "{\"code\":0,\"message\":\"delete success\"}", "application/json");
+    return http_core::MEMORY_REQUEST;
+}
+
+http_core::HttpCode OperationController::clear(const http_core::HttpRequest &request,
+                                               http_core::RequestContext &context,
+                                               http_core::HttpResponse &response)
+{
+    (void)request;
+    if (context.current_user.empty())
+    {
+        response.set_json_error(403, "Forbidden", "operation clear requires user session");
+        return http_core::MEMORY_REQUEST;
+    }
+
+    long deleted_count = 0;
+    if (!repo_mysql::delete_user_operation_logs(context.mysql, context.current_user, deleted_count))
+    {
+        return http_core::INTERNAL_ERROR;
+    }
+
+    response.set_body(200, "OK",
+                      "{\"code\":0,\"message\":\"delete success\",\"deleted_count\":" +
+                          to_string(deleted_count) + "}",
+                      "application/json");
+    return http_core::MEMORY_REQUEST;
 }
 }

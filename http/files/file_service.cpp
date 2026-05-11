@@ -2,7 +2,6 @@
 #include "file_helpers.h"
 #include "file_store.h"
 #include "multipart_parser.h"
-#include "../controllers/file_controller.h"
 #include "../../infra/storage/storage.h"
 #include "../../repo/mysql/file_repository.h"
 #include "../../service/files/file_service.h"
@@ -39,6 +38,45 @@ bool ends_with_ignore_case(const string &value, const string &suffix)
         }
     }
     return true;
+}
+
+bool has_filename_extension(const string &name)
+{
+    const size_t slash = name.find_last_of("/\\");
+    const size_t dot = name.find_last_of('.');
+    return dot != string::npos && (slash == string::npos || dot > slash + 1) && dot + 1 < name.size();
+}
+
+string lower_ascii_copy(const string &value)
+{
+    string lowered;
+    lowered.reserve(value.size());
+    for (size_t i = 0; i < value.size(); ++i)
+    {
+        lowered.push_back(static_cast<char>(tolower(static_cast<unsigned char>(value[i]))));
+    }
+    return lowered;
+}
+
+string content_type_extension(const string &content_type)
+{
+    const string lowered = lower_ascii_copy(content_type);
+    const size_t semicolon = lowered.find(';');
+    const string type = semicolon == string::npos ? lowered : lowered.substr(0, semicolon);
+    if (type == "image/jpeg" || type == "image/jpg") return ".jpg";
+    if (type == "image/png") return ".png";
+    if (type == "image/gif") return ".gif";
+    if (type == "image/webp") return ".webp";
+    if (type == "image/bmp") return ".bmp";
+    if (type == "image/svg+xml") return ".svg";
+    if (type == "video/mp4") return ".mp4";
+    if (type == "audio/mpeg") return ".mp3";
+    if (type == "application/pdf") return ".pdf";
+    if (type == "application/zip") return ".zip";
+    if (type == "application/json") return ".json";
+    if (type == "text/plain") return ".txt";
+    if (type == "text/html") return ".html";
+    return "";
 }
 
 bool starts_with_html_document(const string &path)
@@ -84,6 +122,11 @@ bool starts_with_html_document(const string &path)
 
 void normalize_download_metadata(const string &path, string &content_type, string &download_name)
 {
+    if (download_name.empty())
+    {
+        download_name = "download";
+    }
+
     if (ends_with_ignore_case(download_name, ".html") || ends_with_ignore_case(download_name, ".htm"))
     {
         if (content_type.empty() || content_type == "text/plain" || content_type == "application/octet-stream")
@@ -97,7 +140,16 @@ void normalize_download_metadata(const string &path, string &content_type, strin
         starts_with_html_document(path))
     {
         content_type = "text/html; charset=utf-8";
-        download_name += ".html";
+        if (!has_filename_extension(download_name))
+        {
+            download_name += ".html";
+        }
+        return;
+    }
+
+    if (!has_filename_extension(download_name))
+    {
+        download_name += content_type_extension(content_type);
     }
 }
 
@@ -289,181 +341,6 @@ bool HttpConnection::parse_multipart_form_data_from_file()
     return true;
 }
 
-bool HttpConnection::parse_managed_upload_payload(service_files::UploadPayload &payload, int &status, const char *&title, string &message)
-{
-    payload.filename = http_file_helpers::sanitize_filename(request_value("filename", "name"));
-    payload.content_type = request_value("content_type", "file_content_type");
-    const string folder_value = request_value("folder_id");
-    if (!folder_value.empty())
-    {
-        char *endptr = nullptr;
-        const long folder_id = strtol(folder_value.c_str(), &endptr, 10);
-        if (endptr == folder_value.c_str() || (endptr != nullptr && *endptr != '\0') || folder_id < 0)
-        {
-            status = 400;
-            title = "Bad Request";
-            message = "invalid folder_id";
-            return false;
-        }
-        payload.folder_id = folder_id;
-    }
-
-    if (!m_upload_tmp_path.empty())
-    {
-        if (payload.filename.empty())
-        {
-            payload.filename = http_file_helpers::sanitize_filename(m_upload_tmp_filename);
-        }
-        if (payload.filename.empty())
-        {
-            payload.filename = "file.bin";
-        }
-        if (payload.content_type.empty())
-        {
-            payload.content_type = m_upload_tmp_content_type.empty() ? "application/octet-stream" : m_upload_tmp_content_type;
-        }
-
-        payload.temp_path = m_upload_tmp_path;
-        payload.sha256 = m_upload_tmp_sha256;
-        payload.size = m_upload_tmp_size;
-        payload.use_temp_file = true;
-        return true;
-    }
-
-    if (!m_legacy_compat_enabled)
-    {
-        status = 400;
-        title = "Bad Request";
-        message = "multipart/form-data file upload required";
-        return false;
-    }
-
-    payload.content = request_value("content", "file");
-    if (payload.content.empty())
-    {
-        const string content_base64 = request_value("content_base64", "file_base64");
-        if (!content_base64.empty() && !decode_base64(content_base64, payload.content))
-        {
-            status = 400;
-            title = "Bad Request";
-            message = "invalid base64 content";
-            return false;
-        }
-    }
-
-    if (payload.content.empty())
-    {
-        status = 400;
-        title = "Bad Request";
-        message = "content is empty";
-        return false;
-    }
-
-    if (payload.filename.empty())
-    {
-        payload.filename = "file.txt";
-    }
-    if (payload.content_type.empty())
-    {
-        payload.content_type = "text/plain";
-    }
-    if (payload.content.size() > m_upload_max_bytes)
-    {
-        status = 413;
-        title = "Payload Too Large";
-        message = string("upload exceeds limit of ") + to_string(m_upload_max_bytes) + " bytes";
-        return false;
-    }
-
-    payload.size = payload.content.size();
-    return true;
-}
-
-HttpConnection::HTTP_CODE HttpConnection::handle_file_upload_preflight()
-{
-    return http_controllers::FileController::upload_preflight(*this);
-}
-
-HttpConnection::HTTP_CODE HttpConnection::handle_file_upload()
-{
-    return http_controllers::FileController::upload(*this);
-}
-
-HttpConnection::HTTP_CODE HttpConnection::handle_drive_item_list()
-{
-    return http_controllers::FileController::drive_item_list(*this);
-}
-
-HttpConnection::HTTP_CODE HttpConnection::handle_drive_folder_create()
-{
-    return http_controllers::FileController::drive_folder_create(*this);
-}
-
-HttpConnection::HTTP_CODE HttpConnection::handle_drive_folder_delete(const char *path)
-{
-    return http_controllers::FileController::drive_folder_delete(*this, path);
-}
-
-HttpConnection::HTTP_CODE HttpConnection::handle_drive_file_upload()
-{
-    return http_controllers::FileController::drive_file_upload(*this);
-}
-
-HttpConnection::HTTP_CODE HttpConnection::handle_file_list()
-{
-    return http_controllers::FileController::private_file_list(*this);
-}
-
-HttpConnection::HTTP_CODE HttpConnection::handle_public_file_list()
-{
-    return http_controllers::FileController::public_file_list(*this);
-}
-
-HttpConnection::HTTP_CODE HttpConnection::handle_public_file_detail(const char *path)
-{
-    return http_controllers::FileController::public_file_detail(*this, path);
-}
-
-HttpConnection::HTTP_CODE HttpConnection::handle_file_download(const char *path)
-{
-    return http_controllers::FileController::private_file_download(*this, path);
-}
-
-HttpConnection::HTTP_CODE HttpConnection::handle_public_file_download(const char *path)
-{
-    return http_controllers::FileController::public_file_download(*this, path);
-}
-
-HttpConnection::HTTP_CODE HttpConnection::handle_file_share_create(const char *path)
-{
-    return http_controllers::FileController::share_create(*this, path);
-}
-
-HttpConnection::HTTP_CODE HttpConnection::handle_share_detail(const char *path)
-{
-    return http_controllers::FileController::share_detail(*this, path);
-}
-
-HttpConnection::HTTP_CODE HttpConnection::handle_share_download(const char *path)
-{
-    return http_controllers::FileController::share_download(*this, path);
-}
-
-HttpConnection::HTTP_CODE HttpConnection::handle_file_delete(const char *path)
-{
-    return http_controllers::FileController::remove(*this, path);
-}
-
-HttpConnection::HTTP_CODE HttpConnection::handle_file_visibility_update(const char *path)
-{
-    return http_controllers::FileController::update_visibility(*this, path);
-}
-
-HttpConnection::HTTP_CODE HttpConnection::handle_file_restore(const char *path)
-{
-    return http_controllers::FileController::restore(*this, path);
-}
-
 bool HttpConnection::open_managed_file(const string &path, const string &content_type, const string &download_name)
 {
     strncpy(m_real_file, path.c_str(), sizeof(m_real_file) - 1);
@@ -481,7 +358,7 @@ bool HttpConnection::open_managed_file(const string &path, const string &content
     }
 
     string resolved_content_type = content_type.empty() ? "application/octet-stream" : content_type;
-    string resolved_download_name = download_name.empty() ? "download.txt" : download_name;
+    string resolved_download_name = download_name.empty() ? "download" : download_name;
     normalize_download_metadata(path, resolved_content_type, resolved_download_name);
 
     strncpy(m_response_content_type, resolved_content_type.c_str(), sizeof(m_response_content_type) - 1);

@@ -45,12 +45,12 @@ sequenceDiagram
     SR->>TP: append_p()
     TP->>HC: process()
     HC->>HC: parse_post_body()
-    HC->>DB: SELECT passwd, passwd_salt FROM user
-    DB-->>HC: user row
-    HC->>HC: verify_user_password(PBKDF2 / legacy upgrade)
+    HC->>DB: SELECT password_hash FROM users
+    DB-->>HC: users row
+    HC->>HC: verify_user_password(PBKDF2)
     HC->>HC: make_session_token()
-    HC->>DB: INSERT/UPDATE user_sessions
-    HC->>DB: DELETE old user_sessions for same user
+    HC->>DB: INSERT/UPDATE user_sessions(user_id)
+    HC->>DB: DELETE old user_sessions for same user_id
     HC->>DB: INSERT operation_logs(login)
     HC-->>SR: JSON response with token
     SR-->>C: 200 OK
@@ -67,7 +67,7 @@ sequenceDiagram
     participant FS as webroot/uploads
     participant DB as MySQL
 
-    C->>SR: POST /api/private/files
+    C->>SR: POST /api/drive/files/upload
     Note over C,SR: Authorization + JSON body
     SR->>TP: append_p()
     TP->>HC: process()
@@ -93,7 +93,7 @@ sequenceDiagram
     participant DB as MySQL
     participant FS as webroot/uploads
 
-    C->>SR: GET /api/private/files/:id/download
+    C->>SR: GET /api/drive/files/:id/download
     SR->>TP: append_p()
     TP->>HC: process()
     HC->>HC: middleware_auth()

@@ -6,6 +6,7 @@ parser-chunked-test-sanitize
 *.out
 *.log
 *.pid
+node_modules/
 
 ServerLog/
 log/*.log
@@ -33,3 +34,4 @@ webroot/uploads/*
 build/
 build-sanitize/
 build-coverage/
+build-*/

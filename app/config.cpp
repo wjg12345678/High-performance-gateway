@@ -34,6 +34,12 @@ long getenv_long_value(const char *name, long fallback)
     return value ? atol(value) : fallback;
 }
 
+double getenv_double_value(const char *name, double fallback)
+{
+    const char *value = getenv_value(name);
+    return value ? atof(value) : fallback;
+}
+
 string getenv_string_value(const char *name, const string &fallback)
 {
     const char *value = getenv_value(name);
@@ -97,6 +103,22 @@ Config::Config(){
     upload_max_bytes = 100 * 1024 * 1024;
     user_storage_quota_bytes = 1024L * 1024L * 1024L;
     threadpool_queue_mode = "mutex";
+    auth_rate_limit_enabled = 0;
+    redis_host = "127.0.0.1";
+    redis_port = 6379;
+    redis_password = "";
+    redis_db = 0;
+    redis_pool_size = 4;
+    redis_connect_timeout_ms = 80;
+    redis_socket_timeout_ms = 80;
+    redis_max_retries = 0;
+    auth_login_ip_max_tokens = 60;
+    auth_login_ip_refill_rate = 1.0;
+    auth_login_user_max_tokens = 10;
+    auth_login_user_refill_rate = 0.166667;
+    auth_register_ip_max_tokens = 30;
+    auth_register_ip_refill_rate = 0.05;
+    auth_rate_limit_fallback_mode = "local";
     m_config_file_path = "server.conf";
 }
 
@@ -166,6 +188,22 @@ void Config::load_file(const char *path)
         else if (key == "upload_max_bytes") upload_max_bytes = atoi(value.c_str());
         else if (key == "user_storage_quota_bytes") user_storage_quota_bytes = atol(value.c_str());
         else if (key == "threadpool_queue_mode") threadpool_queue_mode = value;
+        else if (key == "auth_rate_limit_enabled") auth_rate_limit_enabled = atoi(value.c_str());
+        else if (key == "redis_host") redis_host = value;
+        else if (key == "redis_port") redis_port = atoi(value.c_str());
+        else if (key == "redis_password") redis_password = value;
+        else if (key == "redis_db") redis_db = atoi(value.c_str());
+        else if (key == "redis_pool_size") redis_pool_size = atoi(value.c_str());
+        else if (key == "redis_connect_timeout_ms") redis_connect_timeout_ms = atoi(value.c_str());
+        else if (key == "redis_socket_timeout_ms") redis_socket_timeout_ms = atoi(value.c_str());
+        else if (key == "redis_max_retries") redis_max_retries = atoi(value.c_str());
+        else if (key == "auth_login_ip_max_tokens") auth_login_ip_max_tokens = atoi(value.c_str());
+        else if (key == "auth_login_ip_refill_rate") auth_login_ip_refill_rate = atof(value.c_str());
+        else if (key == "auth_login_user_max_tokens") auth_login_user_max_tokens = atoi(value.c_str());
+        else if (key == "auth_login_user_refill_rate") auth_login_user_refill_rate = atof(value.c_str());
+        else if (key == "auth_register_ip_max_tokens") auth_register_ip_max_tokens = atoi(value.c_str());
+        else if (key == "auth_register_ip_refill_rate") auth_register_ip_refill_rate = atof(value.c_str());
+        else if (key == "auth_rate_limit_fallback_mode") auth_rate_limit_fallback_mode = value;
     }
 }
 
@@ -193,6 +231,20 @@ void Config::apply_env_overrides()
     upload_max_bytes = getenv_int_value("TWS_UPLOAD_MAX_BYTES", upload_max_bytes);
     user_storage_quota_bytes = getenv_long_value("TWS_USER_STORAGE_QUOTA_BYTES", user_storage_quota_bytes);
     threadpool_queue_mode = getenv_string_value("TWS_THREADPOOL_QUEUE_MODE", threadpool_queue_mode);
+    auth_rate_limit_enabled = getenv_int_value("TWS_AUTH_RATE_LIMIT_ENABLED", auth_rate_limit_enabled);
+    redis_port = getenv_int_value("TWS_REDIS_PORT", redis_port);
+    redis_db = getenv_int_value("TWS_REDIS_DB", redis_db);
+    redis_pool_size = getenv_int_value("TWS_REDIS_POOL_SIZE", redis_pool_size);
+    redis_connect_timeout_ms = getenv_int_value("TWS_REDIS_CONNECT_TIMEOUT_MS", redis_connect_timeout_ms);
+    redis_socket_timeout_ms = getenv_int_value("TWS_REDIS_SOCKET_TIMEOUT_MS", redis_socket_timeout_ms);
+    redis_max_retries = getenv_int_value("TWS_REDIS_MAX_RETRIES", redis_max_retries);
+    auth_login_ip_max_tokens = getenv_int_value("TWS_AUTH_LOGIN_IP_MAX_TOKENS", auth_login_ip_max_tokens);
+    auth_login_ip_refill_rate = getenv_double_value("TWS_AUTH_LOGIN_IP_REFILL_RATE", auth_login_ip_refill_rate);
+    auth_login_user_max_tokens = getenv_int_value("TWS_AUTH_LOGIN_USER_MAX_TOKENS", auth_login_user_max_tokens);
+    auth_login_user_refill_rate = getenv_double_value("TWS_AUTH_LOGIN_USER_REFILL_RATE", auth_login_user_refill_rate);
+    auth_register_ip_max_tokens = getenv_int_value("TWS_AUTH_REGISTER_IP_MAX_TOKENS", auth_register_ip_max_tokens);
+    auth_register_ip_refill_rate = getenv_double_value("TWS_AUTH_REGISTER_IP_REFILL_RATE", auth_register_ip_refill_rate);
+    auth_rate_limit_fallback_mode = getenv_string_value("TWS_AUTH_RATE_LIMIT_FALLBACK_MODE", auth_rate_limit_fallback_mode);
 
     const char *value = nullptr;
     value = getenv_value("TWS_PID_FILE");
@@ -209,6 +261,10 @@ void Config::apply_env_overrides()
     if (value) db_password = value;
     value = getenv_value("TWS_DB_NAME");
     if (value) db_name = value;
+    value = getenv_value("TWS_REDIS_HOST");
+    if (value) redis_host = value;
+    value = getenv_value("TWS_REDIS_PASSWORD");
+    if (value) redis_password = value;
 }
 
 void Config::parse_arg(int argc, char*argv[]){

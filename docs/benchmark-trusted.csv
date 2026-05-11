@@ -1,5 +1,4 @@
 case,endpoint,method,concurrency,duration,threads,qps,p95,p99,error_rate,errors,web_cpu_peak_percent,web_mem_peak_mb,mysql_cpu_peak_percent,mysql_mem_peak_mb,source
-static_index,/,GET,100,15s,4,6549.32,NA,50.65ms,0%,none,415.34,119.7,14.16,437,best_mutex_fixed_20260423
 login,/api/login,POST,100,15s,4,988.30,NA,161.76ms,0%,none,119.25,118.6,178.62,442,best_mutex_fixed_20260423
 private_ping,/api/private/ping,GET,100,15s,4,8336.97,NA,69.31ms,0%,none,524.76,121,39.87,441.6,best_mutex_fixed_20260423
-private_files,/api/private/files,GET,100,15s,4,5356.82,NA,81.27ms,0%,none,536.03,120.5,489.04,441.8,best_mutex_fixed_20260423
+drive_items,/api/drive/files/upload,GET,100,15s,4,5356.82,NA,81.27ms,0%,none,536.03,120.5,489.04,441.8,best_mutex_fixed_20260423

@@ -178,6 +178,35 @@ namespace http_file_helpers
 std::string sanitize_filename(const std::string &filename) { return filename; }
 }
 
+namespace http_core
+{
+std::string trim_copy(const std::string &value)
+{
+    size_t start = 0;
+    while (start < value.size() && isspace((unsigned char)value[start]))
+    {
+        ++start;
+    }
+    size_t end = value.size();
+    while (end > start && isspace((unsigned char)value[end - 1]))
+    {
+        --end;
+    }
+    return value.substr(start, end - start);
+}
+
+std::string lowercase_copy(const std::string &value)
+{
+    std::string lowered;
+    lowered.reserve(value.size());
+    for (size_t i = 0; i < value.size(); ++i)
+    {
+        lowered.push_back(static_cast<char>(tolower(static_cast<unsigned char>(value[i]))));
+    }
+    return lowered;
+}
+}
+
 static void reset_parser(HttpConnection &conn)
 {
     conn.m_close_log = 1;
@@ -253,7 +282,7 @@ static void streams_multipart_chunked_body()
 {
     HttpConnection conn;
     reset_parser(conn);
-    feed(conn, "POST /api/private/files HTTP/1.1\r\nHost: localhost\r\nContent-Type: multipart/form-data; boundary=x\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n2\r\nde\r\n0\r\n\r\n");
+    feed(conn, "POST /api/drive/files/upload HTTP/1.1\r\nHost: localhost\r\nContent-Type: multipart/form-data; boundary=x\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n2\r\nde\r\n0\r\n\r\n");
     assert(conn.process_read() == HttpConnection::MEMORY_REQUEST);
     assert(conn.m_stream_body_file != nullptr);
     assert(conn.m_stream_body_bytes_received == 5);

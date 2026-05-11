@@ -3,97 +3,14 @@
 #include "../../http/files/file_helpers.h"
 #include "../../http/files/file_store.h"
 #include "../../infra/storage/storage.h"
+#include "../../repo/mysql/mysql_utils.h"
 
 #include <cctype>
-#include <openssl/rand.h>
+#include <cstdlib>
 
 namespace
 {
-const size_t kStoredNamePrefixLength = 24;
 const size_t kFilenameMaxLength = 80;
-
-void set_not_found(service_files::ServiceError &error, const char *message);
-void set_forbidden(service_files::ServiceError &error, const char *message);
-
-std::string encode_hex(const unsigned char *data, size_t len)
-{
-    static const char kHexChars[] = "0123456789abcdef";
-    std::string hex;
-    hex.reserve(len * 2);
-    for (size_t i = 0; i < len; ++i)
-    {
-        hex.push_back(kHexChars[(data[i] >> 4) & 0x0F]);
-        hex.push_back(kHexChars[data[i] & 0x0F]);
-    }
-    return hex;
-}
-
-std::string make_share_token()
-{
-    unsigned char bytes[16];
-    if (RAND_bytes(bytes, sizeof(bytes)) != 1)
-    {
-        return "";
-    }
-    return encode_hex(bytes, sizeof(bytes));
-}
-
-std::string access_code_hash(const std::string &access_code)
-{
-    return access_code.empty() ? std::string() : infra_storage::sha256_hex(access_code);
-}
-
-void fill_share_result(const repo_mysql::FileShareRecord &record, service_files::ShareResult &result)
-{
-    result.token = record.token;
-    result.file_id = record.file_id;
-    result.filename = record.file.original_name;
-    result.content_type = record.file.content_type;
-    result.size = record.file.file_size;
-    result.sha256 = record.file.content_sha256;
-    result.has_access_code = !record.access_code_hash.empty();
-    result.expires_at = record.expires_at;
-    result.max_downloads = record.max_downloads;
-    result.download_count = record.download_count;
-}
-
-bool validate_share_access(const repo_mysql::FileShareRecord &record, const std::string &access_code,
-                           service_files::ServiceError &error)
-{
-    if (record.file.is_deleted)
-    {
-        set_not_found(error, "shared file not found");
-        return false;
-    }
-    if (record.is_expired)
-    {
-        error.status = 410;
-        error.title = "Gone";
-        error.message = "share link expired";
-        return false;
-    }
-    if (record.max_downloads > 0 && record.download_count >= record.max_downloads)
-    {
-        error.status = 429;
-        error.title = "Too Many Requests";
-        error.message = "share download limit reached";
-        return false;
-    }
-    if (!record.access_code_hash.empty())
-    {
-        if (access_code.empty())
-        {
-            set_forbidden(error, "access code required");
-            return false;
-        }
-        if (access_code_hash(access_code) != record.access_code_hash)
-        {
-            set_forbidden(error, "invalid access code");
-            return false;
-        }
-    }
-    return true;
-}
 
 std::string duplicate_filename_candidate(const std::string &name, int index)
 {
@@ -115,36 +32,25 @@ std::string duplicate_filename_candidate(const std::string &name, int index)
 
 void set_not_found(service_files::ServiceError &error, const char *message)
 {
-    error.status = 404;
-    error.title = "Not Found";
+    error.code = service_files::ErrorCode::NotFound;
     error.message = message;
 }
 
 void set_forbidden(service_files::ServiceError &error, const char *message)
 {
-    error.status = 403;
-    error.title = "Forbidden";
+    error.code = service_files::ErrorCode::Forbidden;
     error.message = message;
 }
 
 void set_conflict(service_files::ServiceError &error, const char *message)
 {
-    error.status = 409;
-    error.title = "Conflict";
+    error.code = service_files::ErrorCode::Conflict;
     error.message = message;
 }
 
 void set_bad_request(service_files::ServiceError &error, const char *message)
 {
-    error.status = 400;
-    error.title = "Bad Request";
-    error.message = message;
-}
-
-void set_payload_too_large(service_files::ServiceError &error, const std::string &message)
-{
-    error.status = 413;
-    error.title = "Payload Too Large";
+    error.code = service_files::ErrorCode::InvalidArgument;
     error.message = message;
 }
 
@@ -173,6 +79,50 @@ std::string sanitize_folder_name(const std::string &name)
     }
     return trimmed;
 }
+
+class MysqlTransaction
+{
+public:
+    explicit MysqlTransaction(MYSQL *mysql) : m_mysql(mysql), m_active(false), m_committed(false) {}
+
+    ~MysqlTransaction()
+    {
+        if (m_active && !m_committed)
+        {
+            repo_mysql::rollback_transaction(m_mysql);
+        }
+    }
+
+    bool begin()
+    {
+        if (!repo_mysql::begin_transaction(m_mysql))
+        {
+            return false;
+        }
+        m_active = true;
+        return true;
+    }
+
+    bool commit()
+    {
+        if (!m_active)
+        {
+            return false;
+        }
+        if (!repo_mysql::commit_transaction(m_mysql))
+        {
+            return false;
+        }
+        m_committed = true;
+        m_active = false;
+        return true;
+    }
+
+private:
+    MYSQL *m_mysql;
+    bool m_active;
+    bool m_committed;
+};
 }
 
 namespace service_files
@@ -220,81 +170,11 @@ std::string json_escape(const std::string &value)
     return escaped;
 }
 
-std::string build_empty_private_file_list_json(long limit, bool include_deleted)
-{
-    std::string body = "{\"code\":0,\"files\":[],\"pagination\":{\"limit\":";
-    body += std::to_string(limit);
-    body += ",\"next_cursor\":0,\"has_more\":false},\"view\":\"";
-    body += include_deleted ? "trash" : "active";
-    body += "\"}";
-    return body;
-}
-
 std::string build_empty_public_file_list_json(long limit)
 {
     std::string body = "{\"code\":0,\"files\":[],\"pagination\":{\"limit\":";
     body += std::to_string(limit);
     body += ",\"next_cursor\":0,\"has_more\":false}}";
-    return body;
-}
-
-std::string build_private_file_list_json(const std::vector<repo_mysql::FileListItem> &files,
-                                         long next_cursor, int limit, bool include_deleted)
-{
-    std::string items;
-    bool first = true;
-
-    for (const repo_mysql::FileListItem &file : files)
-    {
-        if (!first)
-        {
-            items += ",";
-        }
-        first = false;
-
-        items += "{\"id\":";
-        items += std::to_string(file.id);
-        items += ",\"filename\":\"";
-        items += json_escape(file.filename);
-        items += "\",\"content_type\":\"";
-        items += json_escape(file.content_type);
-        items += "\",\"size\":";
-        items += std::to_string(file.size);
-        items += ",\"is_public\":";
-        items += file.is_public ? "true" : "false";
-        items += ",\"folder_id\":";
-        items += std::to_string(file.folder_id);
-        items += ",\"created_at\":\"";
-        items += json_escape(file.created_at);
-        items += "\"";
-        if (include_deleted)
-        {
-            items += ",\"deleted_at\":";
-            if (file.deleted_at.empty())
-            {
-                items += "null";
-            }
-            else
-            {
-                items += "\"";
-                items += json_escape(file.deleted_at);
-                items += "\"";
-            }
-        }
-        items += "}";
-    }
-
-    std::string body = "{\"code\":0,\"files\":[";
-    body += items;
-    body += "],\"pagination\":{\"limit\":";
-    body += std::to_string(limit);
-    body += ",\"next_cursor\":";
-    body += std::to_string(next_cursor);
-    body += ",\"has_more\":";
-    body += next_cursor > 0 ? "true" : "false";
-    body += "},\"view\":\"";
-    body += include_deleted ? "trash" : "active";
-    body += "\"}";
     return body;
 }
 
@@ -373,6 +253,58 @@ std::string build_drive_items_json(long folder_id, const std::vector<repo_mysql:
     return body;
 }
 
+std::string build_trash_items_json(const std::vector<repo_mysql::FileListItem> &files)
+{
+    std::string file_items;
+    bool first = true;
+    for (const repo_mysql::FileListItem &file : files)
+    {
+        if (!first)
+        {
+            file_items += ",";
+        }
+        first = false;
+        file_items += "{\"id\":";
+        file_items += std::to_string(file.id);
+        file_items += ",\"folder_id\":";
+        file_items += std::to_string(file.folder_id);
+        file_items += ",\"filename\":\"";
+        file_items += json_escape(file.filename);
+        file_items += "\",\"content_type\":\"";
+        file_items += json_escape(file.content_type);
+        file_items += "\",\"size\":";
+        file_items += std::to_string(file.size);
+        file_items += ",\"created_at\":\"";
+        file_items += json_escape(file.created_at);
+        file_items += "\",\"deleted_at\":\"";
+        file_items += json_escape(file.deleted_at);
+        file_items += "\"}";
+    }
+
+    std::string body = "{\"code\":0,\"files\":[";
+    body += file_items;
+    body += "]}";
+    return body;
+}
+
+std::string build_file_restored_json(const ManagedFileRecord &record)
+{
+    std::string body = "{\"code\":0,\"message\":\"file restored\",\"file\":{\"id\":";
+    body += std::to_string(record.file_id);
+    body += ",\"folder_id\":";
+    body += std::to_string(record.folder_id);
+    body += ",\"filename\":\"";
+    body += json_escape(record.original_name);
+    body += "\",\"content_type\":\"";
+    body += json_escape(record.content_type);
+    body += "\",\"size\":";
+    body += std::to_string(record.file_size);
+    body += ",\"is_public\":";
+    body += record.is_public ? "true" : "false";
+    body += "}}";
+    return body;
+}
+
 std::string build_public_file_list_json(const std::vector<repo_mysql::FileListItem> &files,
                                         long next_cursor, int limit)
 {
@@ -434,108 +366,6 @@ std::string build_public_file_detail_json(const ManagedFileRecord &record, long 
     return body;
 }
 
-std::string build_upload_success_json(const UploadResult &result)
-{
-    std::string body = "{\"code\":0,\"message\":\"upload success\",\"file\":{\"id\":";
-    body += std::to_string(result.file_id);
-    body += ",\"filename\":\"";
-    body += json_escape(result.filename);
-    body += "\",\"folder_id\":";
-    body += std::to_string(result.folder_id);
-    body += ",\"physical_id\":";
-    body += std::to_string(result.physical_id);
-    body += ",\"size\":";
-    body += std::to_string(result.size);
-    body += ",\"is_public\":";
-    body += result.is_public ? "true" : "false";
-    body += ",\"deduplicated\":";
-    body += result.deduplicated ? "true" : "false";
-    body += ",\"sha256\":\"";
-    body += json_escape(result.sha256);
-    body += "\"}}";
-    return body;
-}
-
-std::string build_upload_preflight_json(const UploadQuotaStatus &status)
-{
-    std::string body = "{\"code\":0,\"allowed\":";
-    body += status.allowed ? "true" : "false";
-    body += ",\"requested_bytes\":";
-    body += std::to_string(status.requested_bytes);
-    body += ",\"used_bytes\":";
-    body += std::to_string(status.used_bytes);
-    body += ",\"remaining_bytes\":";
-    body += std::to_string(status.remaining_bytes);
-    body += ",\"max_single_file_bytes\":";
-    body += std::to_string(status.max_single_file_bytes);
-    body += ",\"max_total_bytes\":";
-    body += std::to_string(status.max_total_bytes);
-    body += ",\"reason\":";
-    if (status.reason.empty())
-    {
-        body += "null";
-    }
-    else
-    {
-        body += "\"";
-        body += json_escape(status.reason);
-        body += "\"";
-    }
-    body += "}";
-    return body;
-}
-
-std::string build_restore_success_json(long file_id, const std::string &filename)
-{
-    std::string body = "{\"code\":0,\"message\":\"file restored\",\"file\":{\"id\":";
-    body += std::to_string(file_id);
-    body += ",\"filename\":\"";
-    body += json_escape(filename);
-    body += "\"}}";
-    return body;
-}
-
-std::string build_share_json(const ShareResult &share)
-{
-    std::string body = "{\"code\":0,\"share\":{\"token\":\"";
-    body += json_escape(share.token);
-    body += "\",\"file_id\":";
-    body += std::to_string(share.file_id);
-    body += ",\"filename\":\"";
-    body += json_escape(share.filename);
-    body += "\",\"content_type\":\"";
-    body += json_escape(share.content_type);
-    body += "\",\"size\":";
-    body += std::to_string(share.size);
-    body += ",\"sha256\":\"";
-    body += json_escape(share.sha256);
-    body += "\",\"has_access_code\":";
-    body += share.has_access_code ? "true" : "false";
-    body += ",\"expires_at\":";
-    if (share.expires_at.empty())
-    {
-        body += "null";
-    }
-    else
-    {
-        body += "\"";
-        body += json_escape(share.expires_at);
-        body += "\"";
-    }
-    body += ",\"max_downloads\":";
-    body += std::to_string(share.max_downloads);
-    body += ",\"download_count\":";
-    body += std::to_string(share.download_count);
-    body += ",\"share_url\":\"/share?token=";
-    body += json_escape(share.token);
-    body += "\",\"detail_url\":\"/api/share/";
-    body += json_escape(share.token);
-    body += "\",\"download_url\":\"/api/share/";
-    body += json_escape(share.token);
-    body += "/download\"}}";
-    return body;
-}
-
 bool load_owned_file_record(MYSQL *mysql, const std::string &owner, long file_id,
                             ManagedFileRecord &record, ServiceError &error, bool include_deleted)
 {
@@ -551,31 +381,6 @@ bool load_owned_file_record(MYSQL *mysql, const std::string &owner, long file_id
         return false;
     }
 
-    return true;
-}
-
-bool list_private_files(MYSQL *mysql, const std::string &owner, bool include_deleted,
-                        long cursor, long limit, std::string &body)
-{
-    repo_mysql::PageIds page;
-    if (!repo_mysql::fetch_private_file_page_ids(mysql, owner, include_deleted, cursor, limit, page))
-    {
-        return false;
-    }
-
-    if (page.ids.empty())
-    {
-        body = build_empty_private_file_list_json(limit, include_deleted);
-        return true;
-    }
-
-    std::vector<repo_mysql::FileListItem> files;
-    if (!repo_mysql::fetch_private_file_list(mysql, page.ids, files))
-    {
-        return false;
-    }
-
-    body = build_private_file_list_json(files, page.next_cursor, static_cast<int>(limit), include_deleted);
     return true;
 }
 
@@ -635,52 +440,6 @@ bool load_public_file_detail(MYSQL *mysql, const std::string &doc_root, long fil
 
     actual_size = record.file_size;
     infra_storage::file_size(disk_path, actual_size);
-    return true;
-}
-
-bool inspect_upload_quota(MYSQL *mysql, const std::string &owner, long requested_bytes,
-                          const UploadQuota &quota, UploadQuotaStatus &status, ServiceError &error)
-{
-    status = UploadQuotaStatus();
-    status.requested_bytes = requested_bytes;
-    status.max_single_file_bytes = quota.max_single_file_bytes;
-    status.max_total_bytes = quota.max_total_bytes;
-
-    if (requested_bytes < 0)
-    {
-        set_bad_request(error, "invalid file size");
-        status.reason = error.message;
-        return false;
-    }
-
-    if (!repo_mysql::fetch_user_storage_usage(mysql, owner, status.used_bytes))
-    {
-        return false;
-    }
-
-    status.remaining_bytes = quota.max_total_bytes > 0 && status.used_bytes < quota.max_total_bytes
-                                 ? quota.max_total_bytes - status.used_bytes
-                                 : 0;
-    if (quota.max_total_bytes <= 0)
-    {
-        status.remaining_bytes = 0;
-    }
-
-    if (quota.max_single_file_bytes > 0 && requested_bytes > quota.max_single_file_bytes)
-    {
-        status.reason = "file exceeds single file limit of " + std::to_string(quota.max_single_file_bytes) + " bytes";
-        set_payload_too_large(error, status.reason);
-        return true;
-    }
-
-    if (quota.max_total_bytes > 0 && requested_bytes > status.remaining_bytes)
-    {
-        status.reason = "user storage quota exceeded";
-        set_conflict(error, status.reason.c_str());
-        return true;
-    }
-
-    status.allowed = true;
     return true;
 }
 
@@ -835,167 +594,15 @@ bool list_drive_items(MYSQL *mysql, const std::string &owner, long folder_id, st
     return true;
 }
 
-bool create_uploaded_file(MYSQL *mysql, const std::string &doc_root, const std::string &owner,
-                          const std::string &stored_name_prefix, UploadPayload &payload,
-                          bool is_public, const UploadQuota &quota, UploadResult &result, ServiceError *error)
+bool list_trash_items(MYSQL *mysql, const std::string &owner, std::string &body)
 {
-    ServiceError quota_error;
-    UploadQuotaStatus quota_status;
-    if (!inspect_upload_quota(mysql, owner, payload.size, quota, quota_status, quota_error))
-    {
-        return false;
-    }
-    if (!quota_status.allowed)
-    {
-        if (error != nullptr)
-        {
-            *error = quota_error;
-        }
-        return false;
-    }
-
-    bool folder_exists = false;
-    if (!repo_mysql::folder_exists(mysql, owner, payload.folder_id, folder_exists))
-    {
-        return false;
-    }
-    if (!folder_exists)
-    {
-        if (error != nullptr)
-        {
-            set_not_found(*error, "folder not found");
-        }
-        return false;
-    }
-
-    if (!infra_storage::ensure_directory(infra_storage::storage_root(doc_root)))
+    std::vector<repo_mysql::FileListItem> files;
+    if (!repo_mysql::fetch_trash_files(mysql, owner, files))
     {
         return false;
     }
 
-    payload.filename = ensure_unique_owned_filename(mysql, owner, payload.filename, payload.folder_id);
-    if (payload.sha256.empty() && !payload.content.empty())
-    {
-        payload.sha256 = infra_storage::sha256_hex(payload.content);
-    }
-
-    repo_mysql::PhysicalFileRecord physical;
-    bool deduplicated = false;
-    const bool has_physical = !payload.sha256.empty() &&
-                              repo_mysql::fetch_physical_file_by_sha256(mysql, payload.sha256, physical);
-    if (has_physical)
-    {
-        const std::string disk_path = infra_storage::file_path(doc_root, physical.stored_name);
-        if (infra_storage::file_exists(disk_path))
-        {
-            deduplicated = true;
-            if (payload.use_temp_file)
-            {
-                infra_storage::remove_file(payload.temp_path);
-            }
-        }
-        else if (payload.use_temp_file)
-        {
-            if (!infra_storage::move_file_or_copy(payload.temp_path, disk_path))
-            {
-                return false;
-            }
-        }
-        else if (!infra_storage::write_file(disk_path, payload.content))
-        {
-            return false;
-        }
-
-        if (!repo_mysql::increment_physical_ref(mysql, physical.id))
-        {
-            return false;
-        }
-    }
-    else
-    {
-        physical.stored_name = stored_name_prefix.substr(0, kStoredNamePrefixLength);
-        if (!payload.sha256.empty())
-        {
-            physical.stored_name += "_" + payload.sha256.substr(0, 12);
-        }
-        physical.stored_name += http_file_helpers::file_extension(payload.filename);
-        physical.sha256 = payload.sha256;
-        physical.file_size = payload.size;
-        physical.ref_count = 1;
-
-        const std::string disk_path = infra_storage::file_path(doc_root, physical.stored_name);
-        if (payload.use_temp_file)
-        {
-            if (!infra_storage::move_file_or_copy(payload.temp_path, disk_path))
-            {
-                return false;
-            }
-        }
-        else if (!infra_storage::write_file(disk_path, payload.content))
-        {
-            return false;
-        }
-
-        long physical_id = 0;
-        if (!repo_mysql::insert_physical_file(mysql, physical, physical_id))
-        {
-            if (repo_mysql::last_errno(mysql) == 1062 && repo_mysql::fetch_physical_file_by_sha256(mysql, payload.sha256, physical))
-            {
-                const std::string existing_path = infra_storage::file_path(doc_root, physical.stored_name);
-                if (!infra_storage::file_exists(existing_path) &&
-                    !infra_storage::move_file_or_copy(disk_path, existing_path))
-                {
-                    infra_storage::remove_file(disk_path);
-                    return false;
-                }
-                else if (infra_storage::file_exists(disk_path))
-                {
-                    infra_storage::remove_file(disk_path);
-                }
-                deduplicated = true;
-                if (!repo_mysql::increment_physical_ref(mysql, physical.id))
-                {
-                    return false;
-                }
-            }
-            else
-            {
-                infra_storage::remove_file(disk_path);
-                return false;
-            }
-        }
-        else
-        {
-            physical.id = physical_id;
-        }
-    }
-
-    repo_mysql::FileCreateRecord file_record;
-    file_record.owner = owner;
-    file_record.stored_name = physical.stored_name;
-    file_record.physical_id = physical.id;
-    file_record.original_name = payload.filename;
-    file_record.content_type = payload.content_type;
-    file_record.folder_id = payload.folder_id;
-    file_record.file_size = payload.size;
-    file_record.is_public = is_public;
-    file_record.sha256 = payload.sha256;
-
-    long file_id = 0;
-    if (!repo_mysql::insert_file(mysql, file_record, file_id))
-    {
-        repo_mysql::decrement_physical_ref(mysql, physical.id);
-        return false;
-    }
-
-    result.file_id = file_id;
-    result.folder_id = payload.folder_id;
-    result.physical_id = physical.id;
-    result.filename = payload.filename;
-    result.size = payload.size;
-    result.is_public = is_public;
-    result.deduplicated = deduplicated;
-    result.sha256 = payload.sha256;
+    body = build_trash_items_json(files);
     return true;
 }
 
@@ -1010,10 +617,123 @@ bool soft_delete_file(MYSQL *mysql, const std::string &owner, long file_id,
     {
         return false;
     }
-    if (record.physical_id > 0)
+    return true;
+}
+
+bool restore_file(MYSQL *mysql, const std::string &owner, long file_id,
+                  ManagedFileRecord &record, ServiceError &error)
+{
+    if (!load_owned_file_record(mysql, owner, file_id, record, error, true))
     {
-        repo_mysql::decrement_physical_ref(mysql, record.physical_id);
+        return false;
     }
+    if (!record.is_deleted)
+    {
+        set_conflict(error, "file is not in recycle bin");
+        return false;
+    }
+
+    bool folder_exists = false;
+    if (!repo_mysql::folder_exists(mysql, owner, record.folder_id, folder_exists))
+    {
+        return false;
+    }
+    const long restore_folder_id = folder_exists ? record.folder_id : 0;
+    const std::string restored_name = ensure_unique_owned_filename(mysql, owner, record.original_name,
+                                                                   restore_folder_id, record.file_id);
+    if (!repo_mysql::restore_file(mysql, owner, file_id, restore_folder_id, restored_name))
+    {
+        return false;
+    }
+
+    record.folder_id = restore_folder_id;
+    record.original_name = restored_name;
+    record.is_public = false;
+    record.is_deleted = false;
+    record.deleted_at.clear();
+    return true;
+}
+
+bool validate_hard_delete_candidate(const ManagedFileRecord &record, const std::string &owner,
+                                    ServiceError &error)
+{
+    if (record.owner != owner)
+    {
+        set_forbidden(error, "forbidden");
+        return false;
+    }
+    if (!record.is_deleted)
+    {
+        set_conflict(error, "file must be moved to recycle bin before permanent deletion");
+        return false;
+    }
+    return true;
+}
+
+bool hard_delete_file(MYSQL *mysql, const std::string &doc_root, const std::string &owner, long file_id,
+                      ManagedFileRecord &record, ServiceError &error)
+{
+    MysqlTransaction transaction(mysql);
+    if (!transaction.begin())
+    {
+        return false;
+    }
+
+    if (!repo_mysql::fetch_file_record_for_update(mysql, file_id, record, true))
+    {
+        set_not_found(error, "file not found");
+        return false;
+    }
+    if (!validate_hard_delete_candidate(record, owner, error))
+    {
+        return false;
+    }
+
+    const long physical_id = record.physical_id;
+    const std::string stored_name = record.stored_name;
+    if (!repo_mysql::hard_delete_file(mysql, owner, file_id))
+    {
+        return false;
+    }
+
+    bool physical_deleted = false;
+    if (physical_id > 0 && !repo_mysql::delete_physical_file_if_unreferenced(mysql, physical_id, physical_deleted))
+    {
+        return false;
+    }
+
+    if (!transaction.commit())
+    {
+        return false;
+    }
+    if (physical_deleted && !stored_name.empty())
+    {
+        infra_storage::remove_file(infra_storage::file_path(doc_root, stored_name));
+    }
+    return true;
+}
+
+bool empty_trash(MYSQL *mysql, const std::string &doc_root, const std::string &owner,
+                 EmptyTrashResult &result, ServiceError &error)
+{
+    result.deleted_count = 0;
+
+    std::vector<long> file_ids;
+    if (!repo_mysql::fetch_trash_file_ids(mysql, owner, file_ids))
+    {
+        return false;
+    }
+
+    for (long file_id : file_ids)
+    {
+        ManagedFileRecord record;
+        if (!hard_delete_file(mysql, doc_root, owner, file_id, record, error))
+        {
+            return false;
+        }
+        ++result.deleted_count;
+    }
+
     return true;
 }
 
@@ -1025,128 +745,6 @@ bool update_file_visibility(MYSQL *mysql, const std::string &owner, long file_id
         return false;
     }
     return repo_mysql::update_file_visibility(mysql, file_id, is_public);
-}
-
-bool restore_file(MYSQL *mysql, const std::string &doc_root, const std::string &owner, long file_id,
-                  ManagedFileRecord &record, std::string &restored_name, ServiceError &error)
-{
-    if (!load_owned_file_record(mysql, owner, file_id, record, error, true))
-    {
-        return false;
-    }
-    if (!record.is_deleted)
-    {
-        set_conflict(error, "file is not in recycle bin");
-        return false;
-    }
-    if (!infra_storage::file_exists(infra_storage::file_path(doc_root, record.stored_name)))
-    {
-        set_not_found(error, "file content not found");
-        return false;
-    }
-
-    restored_name = ensure_unique_owned_filename(mysql, owner, record.original_name, record.folder_id, file_id);
-    if (!repo_mysql::restore_file(mysql, file_id, restored_name))
-    {
-        return false;
-    }
-    if (record.physical_id > 0)
-    {
-        repo_mysql::increment_physical_ref(mysql, record.physical_id);
-    }
-    return true;
-}
-bool create_share_link(MYSQL *mysql, const std::string &owner, long file_id, const ShareOptions &options,
-                       ShareResult &result, ServiceError &error)
-{
-    if (options.expires_in_seconds < 0 || options.max_downloads < 0)
-    {
-        set_bad_request(error, "invalid share limits");
-        return false;
-    }
-    if (options.access_code.size() > 32)
-    {
-        set_bad_request(error, "access code is too long");
-        return false;
-    }
-
-    ManagedFileRecord file;
-    if (!load_owned_file_record(mysql, owner, file_id, file, error))
-    {
-        return false;
-    }
-
-    repo_mysql::FileShareCreateRecord share;
-    share.file_id = file_id;
-    share.owner = owner;
-    share.access_code_hash = access_code_hash(options.access_code);
-    share.expires_in_seconds = options.expires_in_seconds;
-    share.max_downloads = options.max_downloads;
-
-    for (int attempt = 0; attempt < 3; ++attempt)
-    {
-        share.token = make_share_token();
-        if (share.token.empty())
-        {
-            return false;
-        }
-        if (repo_mysql::insert_file_share(mysql, share))
-        {
-            repo_mysql::FileShareRecord stored;
-            if (!repo_mysql::fetch_file_share(mysql, share.token, stored))
-            {
-                return false;
-            }
-            fill_share_result(stored, result);
-            return true;
-        }
-    }
-    return false;
-}
-
-bool load_share_detail(MYSQL *mysql, const std::string &token, const std::string &access_code,
-                       ShareResult &result, ServiceError &error)
-{
-    repo_mysql::FileShareRecord share;
-    if (!repo_mysql::fetch_file_share(mysql, token, share))
-    {
-        set_not_found(error, "share link not found");
-        return false;
-    }
-    if (!validate_share_access(share, access_code, error))
-    {
-        return false;
-    }
-
-    fill_share_result(share, result);
-    return true;
-}
-
-bool load_share_download(MYSQL *mysql, const std::string &token, const std::string &access_code,
-                         ManagedFileRecord &record, ShareResult &result, ServiceError &error)
-{
-    repo_mysql::FileShareRecord share;
-    if (!repo_mysql::fetch_file_share(mysql, token, share))
-    {
-        set_not_found(error, "share link not found");
-        return false;
-    }
-    if (!validate_share_access(share, access_code, error))
-    {
-        return false;
-    }
-    if (!repo_mysql::increment_file_share_download_count(mysql, token))
-    {
-        error.status = 429;
-        error.title = "Too Many Requests";
-        error.message = "share download limit reached";
-        return false;
-    }
-
-    share.download_count += 1;
-    record = share.file;
-    fill_share_result(share, result);
-    return true;
 }
 
 }

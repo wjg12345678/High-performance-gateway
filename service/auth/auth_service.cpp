@@ -13,7 +13,6 @@
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
 #include <openssl/rand.h>
-#include <openssl/sha.h>
 
 namespace
 {
@@ -106,14 +105,6 @@ bool secure_random_hex(size_t byte_count, std::string &output)
 
     output = encode_hex(&bytes[0], bytes.size());
     return true;
-}
-
-std::string legacy_sha256_hash(const std::string &password, const std::string &salt)
-{
-    const std::string input = salt + password;
-    unsigned char digest[SHA256_DIGEST_LENGTH];
-    SHA256(reinterpret_cast<const unsigned char *>(input.data()), input.size(), digest);
-    return encode_hex(digest, sizeof(digest));
 }
 
 bool derive_pbkdf2_sha256(const std::string &password, const std::string &salt_hex,
@@ -217,11 +208,10 @@ std::string make_session_token()
     return token;
 }
 
-void set_error(service_auth::AuthResult &result, int status, const char *title, const std::string &message)
+void set_error(service_auth::AuthResult &result, service_auth::AuthError error, const std::string &message)
 {
     result.success = false;
-    result.status = status;
-    result.title = title;
+    result.error = error;
     result.message = message;
 }
 
@@ -284,21 +274,29 @@ bool update_user_password_hash(MYSQL *mysql, const std::string &username, const 
     return true;
 }
 
-bool verify_user_password(MYSQL *mysql, const std::string &username, const std::string &password)
+enum class PasswordCheckStatus
+{
+    Ok,
+    UserNotFound,
+    PasswordMismatch,
+    InvalidPasswordRecord,
+    DbError
+};
+
+PasswordCheckStatus check_user_password(MYSQL *mysql, const std::string &username, const std::string &password)
 {
     if (mysql == nullptr)
     {
-        return false;
+        return PasswordCheckStatus::DbError;
     }
 
     repo_mysql::UserPasswordRecord password_record;
     if (!repo_mysql::fetch_user_password(mysql, username, password_record))
     {
-        return false;
+        return mysql_errno(mysql) == 0 ? PasswordCheckStatus::UserNotFound : PasswordCheckStatus::DbError;
     }
 
     const std::string stored_password = password_record.password;
-    const std::string stored_salt = password_record.salt;
 
     int iterations = 0;
     std::string salt_hex;
@@ -306,26 +304,15 @@ bool verify_user_password(MYSQL *mysql, const std::string &username, const std::
     if (parse_password_record(stored_password, iterations, salt_hex, expected_hash))
     {
         std::string candidate_hash;
-        return derive_pbkdf2_sha256(password, salt_hex, iterations, candidate_hash) &&
-               secure_equals(candidate_hash, expected_hash);
-    }
-
-    if (stored_salt.empty())
-    {
-        if (stored_password == password)
+        if (!derive_pbkdf2_sha256(password, salt_hex, iterations, candidate_hash))
         {
-            update_user_password_hash(mysql, username, password);
-            return true;
+            return PasswordCheckStatus::DbError;
         }
-        return false;
+        return secure_equals(candidate_hash, expected_hash) ? PasswordCheckStatus::Ok
+                                                           : PasswordCheckStatus::PasswordMismatch;
     }
 
-    if (secure_equals(stored_password, legacy_sha256_hash(password, stored_salt)))
-    {
-        update_user_password_hash(mysql, username, password);
-        return true;
-    }
-    return false;
+    return PasswordCheckStatus::InvalidPasswordRecord;
 }
 }
 
@@ -357,67 +344,92 @@ bool load_user_cache(MYSQL *mysql)
 
 bool register_user(MYSQL *mysql, const std::string &username, const std::string &password, AuthResult &result)
 {
+    if (mysql == nullptr)
+    {
+        set_error(result, AuthError::Internal, "注册失败，数据库连接不可用。");
+        return false;
+    }
+
+    g_auth_cache_lock.lock();
+    const bool cached_user_exists = g_auth_users.find(username) != g_auth_users.end();
+    g_auth_cache_lock.unlock();
+    if (cached_user_exists)
+    {
+        set_error(result, AuthError::Conflict, "该用户名已被注册，请更换用户名。");
+        return false;
+    }
+
     const std::string password_record = make_password_record(password);
     if (password_record.empty())
     {
-        set_error(result, 500, "Internal Error", "failed to prepare password hash");
+        set_error(result, AuthError::Internal, "注册失败，无法生成密码凭据。");
         return false;
     }
 
-    bool success = false;
-    g_auth_cache_lock.lock();
-    if (g_auth_users.find(username) == g_auth_users.end())
+    if (!repo_mysql::insert_user(mysql, username, password_record))
     {
-        if (repo_mysql::insert_user(mysql, username, password_record))
+        if (mysql_errno(mysql) == 1062)
         {
-            g_auth_users[username] = password_record;
-            success = true;
+            set_error(result, AuthError::Conflict, "该用户名已被注册，请更换用户名。");
+            return false;
         }
+
+        set_error(result, AuthError::Internal, "注册失败，服务暂时无法保存账号信息。");
+        return false;
     }
+
+    g_auth_cache_lock.lock();
+    g_auth_users[username] = password_record;
     g_auth_cache_lock.unlock();
 
-    if (!success)
-    {
-        set_error(result, 409, "Conflict", "register failed");
-        return false;
-    }
-
     result.success = true;
-    result.status = 200;
-    result.title = "OK";
+    result.error = AuthError::None;
     result.message = "register success";
     return true;
 }
 
 bool login_user(MYSQL *mysql, const std::string &username, const std::string &password, AuthResult &result)
 {
-    if (!verify_user_password(mysql, username, password))
+    switch (check_user_password(mysql, username, password))
     {
-        set_error(result, 401, "Unauthorized", "login failed");
+    case PasswordCheckStatus::Ok:
+        break;
+    case PasswordCheckStatus::UserNotFound:
+        set_error(result, AuthError::NotFound, "账号不存在，请先注册。");
+        return false;
+    case PasswordCheckStatus::PasswordMismatch:
+        set_error(result, AuthError::Unauthorized, "密码错误，请重新输入。");
+        return false;
+    case PasswordCheckStatus::InvalidPasswordRecord:
+        set_error(result, AuthError::Internal, "登录失败，账号密码凭据异常，请联系管理员。");
+        return false;
+    case PasswordCheckStatus::DbError:
+    default:
+        set_error(result, AuthError::Internal, "登录失败，服务暂时无法读取账号信息。");
         return false;
     }
 
     const std::string token = make_session_token();
     if (token.empty())
     {
-        set_error(result, 500, "Internal Error", "failed to issue session");
+        set_error(result, AuthError::Internal, "登录失败，服务暂时无法签发会话。");
         return false;
     }
     if (!persist_session(mysql, token, username, kSessionTtlSeconds))
     {
-        set_error(result, 500, "Internal Error", "failed to persist session");
+        set_error(result, AuthError::Internal, "登录失败，服务暂时无法保存会话。");
         return false;
     }
+    repo_mysql::mark_user_login(mysql, username);
     if (!remove_user_sessions(mysql, username, token))
     {
         remove_session(mysql, token);
-        set_error(result, 500, "Internal Error", "failed to revoke previous sessions");
+        set_error(result, AuthError::Internal, "登录失败，服务暂时无法清理旧会话。");
         return false;
     }
 
     result.success = true;
-    result.status = 200;
-    result.title = "OK";
+    result.error = AuthError::None;
     result.message = "login success";
     result.token = token;
     result.expires_in = kSessionTtlSeconds;

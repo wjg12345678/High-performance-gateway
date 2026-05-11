@@ -3,7 +3,10 @@
 #include "../files/file_helpers.h"
 #include "../../infra/storage/storage.h"
 #include "../../repo/mysql/file_repository.h"
+#include "../../repo/mysql/operation_repository.h"
 #include "../../service/files/file_service.h"
+#include "../../service/files/share_service.h"
+#include "../../service/files/upload_service.h"
 
 #include <cctype>
 #include <cstdlib>
@@ -16,6 +19,75 @@ namespace
 {
 const int kDefaultListLimit = 20;
 const int kMaxListLimit = 100;
+
+http_core::HttpCode require_user_session(const http_core::RequestContext &context,
+                                         http_core::HttpResponse &response,
+                                         const char *message)
+{
+    if (!context.current_user.empty())
+    {
+        return http_core::NO_REQUEST;
+    }
+    response.set_json_error(403, "Forbidden", message);
+    return http_core::MEMORY_REQUEST;
+}
+
+http_core::HttpCode respond_json_error(http_core::HttpResponse &response, int status,
+                                       const char *title, const string &message)
+{
+    response.set_json_error(status, title, message);
+    return http_core::MEMORY_REQUEST;
+}
+
+int service_status(service_files::ErrorCode code)
+{
+    switch (code)
+    {
+    case service_files::ErrorCode::None: return 200;
+    case service_files::ErrorCode::InvalidArgument: return 400;
+    case service_files::ErrorCode::Forbidden: return 403;
+    case service_files::ErrorCode::NotFound: return 404;
+    case service_files::ErrorCode::Conflict: return 409;
+    case service_files::ErrorCode::Gone: return 410;
+    case service_files::ErrorCode::TooManyRequests: return 429;
+    case service_files::ErrorCode::PayloadTooLarge: return 413;
+    case service_files::ErrorCode::Internal:
+    default: return 500;
+    }
+}
+
+const char *service_title(service_files::ErrorCode code)
+{
+    switch (code)
+    {
+    case service_files::ErrorCode::None: return "OK";
+    case service_files::ErrorCode::InvalidArgument: return "Bad Request";
+    case service_files::ErrorCode::Forbidden: return "Forbidden";
+    case service_files::ErrorCode::NotFound: return "Not Found";
+    case service_files::ErrorCode::Conflict: return "Conflict";
+    case service_files::ErrorCode::Gone: return "Gone";
+    case service_files::ErrorCode::TooManyRequests: return "Too Many Requests";
+    case service_files::ErrorCode::PayloadTooLarge: return "Payload Too Large";
+    case service_files::ErrorCode::Internal:
+    default: return "Internal Error";
+    }
+}
+
+http_core::HttpCode respond_service_error(http_core::HttpResponse &response,
+                                          const service_files::ServiceError &error)
+{
+    if (error.message.empty())
+    {
+        return http_core::INTERNAL_ERROR;
+    }
+    return respond_json_error(response, service_status(error.code), service_title(error.code), error.message);
+}
+
+bool write_operation_log(MYSQL *mysql, const string &username, const string &action,
+                         const string &resource_type, long resource_id, const string &detail)
+{
+    return repo_mysql::insert_operation_log(mysql, username, action, resource_type, resource_id, detail);
+}
 
 string trim_ascii_copy(const string &value)
 {
@@ -85,78 +157,179 @@ bool parse_share_path(const char *path, bool download, string &token)
     }
     return is_valid_share_token(token);
 }
+
+bool parse_managed_upload_payload(const http_core::HttpRequest &request,
+                                  const http_core::RequestContext &context,
+                                  service_files::UploadPayload &payload,
+                                  int &status,
+                                  const char *&title,
+                                  string &message)
+{
+    payload.filename = http_file_helpers::sanitize_filename(request.value("filename", "name"));
+    payload.content_type = request.value("content_type", "file_content_type");
+    const string folder_value = request.value("folder_id");
+    if (!folder_value.empty())
+    {
+        char *endptr = nullptr;
+        const long folder_id = strtol(folder_value.c_str(), &endptr, 10);
+        if (endptr == folder_value.c_str() || (endptr != nullptr && *endptr != '\0') || folder_id < 0)
+        {
+            status = 400;
+            title = "Bad Request";
+            message = "invalid folder_id";
+            return false;
+        }
+        payload.folder_id = folder_id;
+    }
+
+    if (request.upload.has_file())
+    {
+        if (payload.filename.empty())
+        {
+            payload.filename = http_file_helpers::sanitize_filename(request.upload.filename);
+        }
+        if (payload.filename.empty())
+        {
+            payload.filename = "file.bin";
+        }
+        if (payload.content_type.empty())
+        {
+            payload.content_type = request.upload.content_type.empty() ? "application/octet-stream"
+                                                                       : request.upload.content_type;
+        }
+
+        payload.temp_path = request.upload.temp_path;
+        payload.sha256 = request.upload.sha256;
+        payload.size = request.upload.size;
+        payload.use_temp_file = true;
+        return true;
+    }
+
+    if (!context.legacy_compat_enabled)
+    {
+        status = 400;
+        title = "Bad Request";
+        message = "multipart/form-data file upload required";
+        return false;
+    }
+
+    payload.content = request.value("content", "file");
+    if (payload.content.empty())
+    {
+        const string content_base64 = request.value("content_base64", "file_base64");
+        if (!content_base64.empty() && !http_core::decode_base64(content_base64, payload.content))
+        {
+            status = 400;
+            title = "Bad Request";
+            message = "invalid base64 content";
+            return false;
+        }
+    }
+
+    if (payload.content.empty())
+    {
+        status = 400;
+        title = "Bad Request";
+        message = "content is empty";
+        return false;
+    }
+
+    if (payload.filename.empty())
+    {
+        payload.filename = "file.txt";
+    }
+    if (payload.content_type.empty())
+    {
+        payload.content_type = "text/plain";
+    }
+    if (payload.content.size() > context.upload_max_bytes)
+    {
+        status = 413;
+        title = "Payload Too Large";
+        message = string("upload exceeds limit of ") + to_string(context.upload_max_bytes) + " bytes";
+        return false;
+    }
+
+    payload.size = payload.content.size();
+    return true;
+}
+
+service_files::UploadQuota upload_quota(const http_core::RequestContext &context)
+{
+    service_files::UploadQuota quota;
+    quota.max_single_file_bytes = static_cast<long>(context.upload_max_bytes);
+    quota.max_total_bytes = static_cast<long>(context.user_storage_quota_bytes);
+    return quota;
+}
 }
 
 namespace http_controllers
 {
-HttpConnection::HTTP_CODE FileController::upload_preflight(HttpConnection &conn)
+http_core::HttpCode FileController::upload_preflight(http_core::HttpRequest &request,
+                                                     http_core::RequestContext &context,
+                                                     http_core::HttpResponse &response)
 {
-    HttpConnection::HTTP_CODE auth_code = conn.require_user_session("file upload requires user session");
-    if (auth_code != HttpConnection::NO_REQUEST)
+    http_core::HttpCode auth_code = require_user_session(context, response, "file upload requires user session");
+    if (auth_code != http_core::NO_REQUEST)
     {
         return auth_code;
     }
 
-    string size_value = conn.request_value("size", "file_size");
+    string size_value = request.value("size", "file_size");
     if (size_value.empty())
     {
-        size_value = conn.request_value("bytes");
+        size_value = request.value("bytes");
     }
     if (size_value.empty())
     {
-        size_value = conn.query_value("size");
+        size_value = request.query_value("size");
     }
 
     long requested_bytes = 0;
     if (!parse_non_negative_long(size_value, requested_bytes))
     {
-        return conn.respond_json_error(400, "Bad Request", "invalid file size");
+        return respond_json_error(response, 400, "Bad Request", "invalid file size");
     }
 
-    const string request_folder = conn.request_value("folder_id");
-    const string folder_value = request_folder.empty() ? conn.query_value("folder_id") : request_folder;
+    const string request_folder = request.value("folder_id");
+    const string folder_value = request_folder.empty() ? request.query_value("folder_id") : request_folder;
     if (!folder_value.empty())
     {
         long folder_id = 0;
         if (!parse_non_negative_long(folder_value, folder_id))
         {
-            return conn.respond_json_error(400, "Bad Request", "invalid folder_id");
+            return respond_json_error(response, 400, "Bad Request", "invalid folder_id");
         }
 
         bool exists = false;
-        if (!repo_mysql::folder_exists(conn.mysql, conn.m_current_user, folder_id, exists))
+        if (!repo_mysql::folder_exists(context.mysql, context.current_user, folder_id, exists))
         {
-            return HttpConnection::INTERNAL_ERROR;
+            return http_core::INTERNAL_ERROR;
         }
         if (!exists)
         {
-            return conn.respond_json_error(404, "Not Found", "folder not found");
+            return respond_json_error(response, 404, "Not Found", "folder not found");
         }
     }
-
-    service_files::UploadQuota quota;
-    quota.max_single_file_bytes = static_cast<long>(conn.m_upload_max_bytes);
-    quota.max_total_bytes = static_cast<long>(conn.m_user_storage_quota_bytes);
 
     service_files::UploadQuotaStatus quota_status;
     service_files::ServiceError error;
-    if (!service_files::inspect_upload_quota(conn.mysql, conn.m_current_user, requested_bytes, quota, quota_status, error))
+    if (!service_files::inspect_upload_quota(context.mysql, context.current_user, requested_bytes,
+                                             upload_quota(context), quota_status, error))
     {
-        if (!error.message.empty())
-        {
-            return conn.respond_json_error(error.status, error.title, error.message);
-        }
-        return HttpConnection::INTERNAL_ERROR;
+        return respond_service_error(response, error);
     }
 
-    conn.set_memory_response(200, "OK", service_files::build_upload_preflight_json(quota_status), "application/json");
-    return HttpConnection::MEMORY_REQUEST;
+    response.set_body(200, "OK", service_files::build_upload_preflight_json(quota_status), "application/json");
+    return http_core::MEMORY_REQUEST;
 }
 
-HttpConnection::HTTP_CODE FileController::upload(HttpConnection &conn)
+http_core::HttpCode FileController::upload(http_core::HttpRequest &request,
+                                           http_core::RequestContext &context,
+                                           http_core::HttpResponse &response)
 {
-    HttpConnection::HTTP_CODE auth_code = conn.require_user_session("file upload requires user session");
-    if (auth_code != HttpConnection::NO_REQUEST)
+    http_core::HttpCode auth_code = require_user_session(context, response, "file upload requires user session");
+    if (auth_code != http_core::NO_REQUEST)
     {
         return auth_code;
     }
@@ -165,101 +338,144 @@ HttpConnection::HTTP_CODE FileController::upload(HttpConnection &conn)
     int error_status = 200;
     const char *error_title = "OK";
     string error_message;
-    if (!conn.parse_managed_upload_payload(payload, error_status, error_title, error_message))
+    if (!parse_managed_upload_payload(request, context, payload, error_status, error_title, error_message))
     {
-        return conn.respond_json_error(error_status, error_title, error_message);
+        return respond_json_error(response, error_status, error_title, error_message);
     }
 
-    const bool is_public = service_files::parse_public_flag(conn.request_value("is_public"));
-    const string stored_name_prefix = conn.make_session_token(payload.filename);
+    const bool is_public = service_files::parse_public_flag(request.value("is_public"));
+    const string stored_name_prefix = http_core::make_session_token();
     if (stored_name_prefix.empty())
     {
-        return HttpConnection::INTERNAL_ERROR;
+        return http_core::INTERNAL_ERROR;
     }
 
     service_files::UploadResult result;
     service_files::ServiceError error;
-    service_files::UploadQuota quota;
-    quota.max_single_file_bytes = static_cast<long>(conn.m_upload_max_bytes);
-    quota.max_total_bytes = static_cast<long>(conn.m_user_storage_quota_bytes);
-    if (!service_files::create_uploaded_file(conn.mysql, conn.doc_root, conn.m_current_user, stored_name_prefix,
-                                             payload, is_public, quota, result, &error))
+    if (!service_files::create_uploaded_file(context.mysql, context.doc_root, context.current_user,
+                                             stored_name_prefix, payload, is_public, upload_quota(context),
+                                             result, &error))
     {
-        if (!error.message.empty())
-        {
-            return conn.respond_json_error(error.status, error.title, error.message);
-        }
-        return HttpConnection::INTERNAL_ERROR;
+        return respond_service_error(response, error);
     }
-    if (payload.use_temp_file && payload.temp_path == conn.m_upload_tmp_path)
+    if (payload.use_temp_file && payload.temp_path == request.upload.temp_path)
     {
-        conn.m_upload_tmp_path.clear();
+        context.release_temp_upload(request.upload);
     }
 
-    conn.write_operation_log(conn.m_current_user, "upload", "file", result.file_id, result.filename);
-    conn.set_memory_response(200, "OK", service_files::build_upload_success_json(result), "application/json");
-    return HttpConnection::MEMORY_REQUEST;
+    write_operation_log(context.mysql, context.current_user, "upload", "file", result.file_id, result.filename);
+    response.set_body(200, "OK", service_files::build_upload_success_json(result), "application/json");
+    return http_core::MEMORY_REQUEST;
 }
 
-HttpConnection::HTTP_CODE FileController::drive_item_list(HttpConnection &conn)
+http_core::HttpCode FileController::drive_item_list(http_core::HttpRequest &request,
+                                                    http_core::RequestContext &context,
+                                                    http_core::HttpResponse &response)
 {
-    HttpConnection::HTTP_CODE auth_code = conn.require_user_session("drive list requires user session");
-    if (auth_code != HttpConnection::NO_REQUEST)
+    http_core::HttpCode auth_code = require_user_session(context, response, "drive list requires user session");
+    if (auth_code != http_core::NO_REQUEST)
     {
         return auth_code;
     }
 
-    const long folder_id = conn.query_long_value("folder_id", 0, 0, 2147483647L);
+    const long folder_id = request.query_long_value("folder_id", 0, 0, 2147483647L);
     string body;
     service_files::ServiceError error;
-    if (!service_files::list_drive_items(conn.mysql, conn.m_current_user, folder_id, body, error))
+    if (!service_files::list_drive_items(context.mysql, context.current_user, folder_id, body, error))
     {
-        if (!error.message.empty())
-        {
-            return conn.respond_json_error(error.status, error.title, error.message);
-        }
-        return HttpConnection::INTERNAL_ERROR;
+        return respond_service_error(response, error);
     }
 
-    conn.set_memory_response(200, "OK", body, "application/json");
-    return HttpConnection::MEMORY_REQUEST;
+    response.set_body(200, "OK", body, "application/json");
+    return http_core::MEMORY_REQUEST;
 }
 
-HttpConnection::HTTP_CODE FileController::drive_folder_create(HttpConnection &conn)
+http_core::HttpCode FileController::trash_item_list(http_core::HttpRequest &request,
+                                                    http_core::RequestContext &context,
+                                                    http_core::HttpResponse &response)
 {
-    HttpConnection::HTTP_CODE auth_code = conn.require_user_session("folder create requires user session");
-    if (auth_code != HttpConnection::NO_REQUEST)
+    (void)request;
+    http_core::HttpCode auth_code = require_user_session(context, response, "trash list requires user session");
+    if (auth_code != http_core::NO_REQUEST)
     {
         return auth_code;
     }
 
-    const string parent_value = conn.request_value("parent_id", "folder_id");
+    string body;
+    if (!service_files::list_trash_items(context.mysql, context.current_user, body))
+    {
+        return http_core::INTERNAL_ERROR;
+    }
+
+    response.set_body(200, "OK", body, "application/json");
+    return http_core::MEMORY_REQUEST;
+}
+
+http_core::HttpCode FileController::empty_trash(http_core::HttpRequest &request,
+                                                http_core::RequestContext &context,
+                                                http_core::HttpResponse &response)
+{
+    (void)request;
+    http_core::HttpCode auth_code = require_user_session(context, response, "trash empty requires user session");
+    if (auth_code != http_core::NO_REQUEST)
+    {
+        return auth_code;
+    }
+
+    service_files::EmptyTrashResult result;
+    service_files::ServiceError error;
+    if (!service_files::empty_trash(context.mysql, context.doc_root, context.current_user, result, error))
+    {
+        return respond_service_error(response, error);
+    }
+
+    write_operation_log(context.mysql, context.current_user, "empty_trash", "file", 0,
+                        to_string(result.deleted_count) + " files");
+    response.set_body(200, "OK",
+                      "{\"code\":0,\"message\":\"trash emptied\",\"deleted_count\":" +
+                          to_string(result.deleted_count) + "}",
+                      "application/json");
+    return http_core::MEMORY_REQUEST;
+}
+
+http_core::HttpCode FileController::drive_folder_create(http_core::HttpRequest &request,
+                                                        http_core::RequestContext &context,
+                                                        http_core::HttpResponse &response)
+{
+    http_core::HttpCode auth_code = require_user_session(context, response, "folder create requires user session");
+    if (auth_code != http_core::NO_REQUEST)
+    {
+        return auth_code;
+    }
+
+    const string parent_value = request.value("parent_id", "folder_id");
     long parent_id = 0;
     if (!parent_value.empty() && !parse_non_negative_long(parent_value, parent_id))
     {
-        return conn.respond_json_error(400, "Bad Request", "invalid parent_id");
+        return respond_json_error(response, 400, "Bad Request", "invalid parent_id");
     }
 
     repo_mysql::FolderListItem folder;
     service_files::ServiceError error;
-    if (!service_files::create_folder(conn.mysql, conn.m_current_user, parent_id, conn.request_value("name"), folder, error))
+    if (!service_files::create_folder(context.mysql, context.current_user, parent_id,
+                                      request.value("name"), folder, error))
     {
-        if (!error.message.empty())
-        {
-            return conn.respond_json_error(error.status, error.title, error.message);
-        }
-        return HttpConnection::INTERNAL_ERROR;
+        return respond_service_error(response, error);
     }
 
-    conn.write_operation_log(conn.m_current_user, "create_folder", "folder", folder.id, folder.name);
-    conn.set_memory_response(200, "OK", service_files::build_folder_created_json(folder), "application/json");
-    return HttpConnection::MEMORY_REQUEST;
+    write_operation_log(context.mysql, context.current_user, "create_folder", "folder", folder.id, folder.name);
+    response.set_body(200, "OK", service_files::build_folder_created_json(folder), "application/json");
+    return http_core::MEMORY_REQUEST;
 }
 
-HttpConnection::HTTP_CODE FileController::drive_folder_delete(HttpConnection &conn, const char *path)
+http_core::HttpCode FileController::drive_folder_delete(http_core::HttpRequest &request,
+                                                        http_core::RequestContext &context,
+                                                        http_core::HttpResponse &response,
+                                                        const char *path)
 {
-    HttpConnection::HTTP_CODE auth_code = conn.require_user_session("folder delete requires user session");
-    if (auth_code != HttpConnection::NO_REQUEST)
+    (void)request;
+    http_core::HttpCode auth_code = require_user_session(context, response, "folder delete requires user session");
+    if (auth_code != http_core::NO_REQUEST)
     {
         return auth_code;
     }
@@ -268,93 +484,79 @@ HttpConnection::HTTP_CODE FileController::drive_folder_delete(HttpConnection &co
     long folder_id = strtol(path, &endptr, 10);
     if (endptr == path || *endptr != '\0')
     {
-        return HttpConnection::BAD_REQUEST;
+        return http_core::BAD_REQUEST;
     }
 
     repo_mysql::FolderListItem folder;
     service_files::ServiceError error;
-    if (!service_files::delete_empty_folder(conn.mysql, conn.m_current_user, folder_id, folder, error))
+    if (!service_files::delete_empty_folder(context.mysql, context.current_user, folder_id, folder, error))
     {
-        if (!error.message.empty())
-        {
-            return conn.respond_json_error(error.status, error.title, error.message);
-        }
-        return HttpConnection::INTERNAL_ERROR;
+        return respond_service_error(response, error);
     }
 
-    conn.write_operation_log(conn.m_current_user, "delete_folder", "folder", folder_id, folder.name);
-    conn.set_memory_response(200, "OK", "{\"code\":0,\"message\":\"folder deleted\"}", "application/json");
-    return HttpConnection::MEMORY_REQUEST;
+    write_operation_log(context.mysql, context.current_user, "delete_folder", "folder", folder_id, folder.name);
+    response.set_body(200, "OK", "{\"code\":0,\"message\":\"folder deleted\"}", "application/json");
+    return http_core::MEMORY_REQUEST;
 }
 
-HttpConnection::HTTP_CODE FileController::drive_file_upload(HttpConnection &conn)
+http_core::HttpCode FileController::drive_file_upload(http_core::HttpRequest &request,
+                                                      http_core::RequestContext &context,
+                                                      http_core::HttpResponse &response)
 {
-    return upload(conn);
+    return upload(request, context, response);
 }
 
-HttpConnection::HTTP_CODE FileController::private_file_list(HttpConnection &conn)
+http_core::HttpCode FileController::public_file_list(http_core::HttpRequest &request,
+                                                     http_core::RequestContext &context,
+                                                     http_core::HttpResponse &response)
 {
-    HttpConnection::HTTP_CODE auth_code = conn.require_user_session("file list requires user session");
-    if (auth_code != HttpConnection::NO_REQUEST)
-    {
-        return auth_code;
-    }
-
-    const long limit = conn.query_long_value("limit", kDefaultListLimit, 1, kMaxListLimit);
-    const long cursor = conn.query_long_value("cursor", 0, 0, 2147483647L);
-    const bool include_deleted = conn.query_truthy_value("include_deleted") || conn.query_truthy_value("trash");
+    const long limit = request.query_long_value("limit", kDefaultListLimit, 1, kMaxListLimit);
+    const long cursor = request.query_long_value("cursor", 0, 0, 2147483647L);
 
     string body;
-    if (!service_files::list_private_files(conn.mysql, conn.m_current_user, include_deleted, cursor, limit, body))
+    if (!service_files::list_public_files(context.mysql, cursor, limit, body))
     {
-        return HttpConnection::INTERNAL_ERROR;
+        return http_core::INTERNAL_ERROR;
     }
 
-    conn.set_memory_response(200, "OK", body, "application/json");
-    return HttpConnection::MEMORY_REQUEST;
+    response.set_body(200, "OK", body, "application/json");
+    return http_core::MEMORY_REQUEST;
 }
 
-HttpConnection::HTTP_CODE FileController::public_file_list(HttpConnection &conn)
+http_core::HttpCode FileController::public_file_detail(http_core::HttpRequest &request,
+                                                       http_core::RequestContext &context,
+                                                       http_core::HttpResponse &response,
+                                                       const char *path)
 {
-    const long limit = conn.query_long_value("limit", kDefaultListLimit, 1, kMaxListLimit);
-    const long cursor = conn.query_long_value("cursor", 0, 0, 2147483647L);
-
-    string body;
-    if (!service_files::list_public_files(conn.mysql, cursor, limit, body))
-    {
-        return HttpConnection::INTERNAL_ERROR;
-    }
-
-    conn.set_memory_response(200, "OK", body, "application/json");
-    return HttpConnection::MEMORY_REQUEST;
-}
-
-HttpConnection::HTTP_CODE FileController::public_file_detail(HttpConnection &conn, const char *path)
-{
+    (void)request;
     char *endptr = nullptr;
     long file_id = strtol(path, &endptr, 10);
     if (endptr == path || *endptr != '\0')
     {
-        return HttpConnection::BAD_REQUEST;
+        return http_core::BAD_REQUEST;
     }
 
     ManagedFileRecord record;
     long actual_size = 0;
     service_files::ServiceError error;
-    if (!service_files::load_public_file_detail(conn.mysql, conn.doc_root, file_id, record, actual_size, error))
+    if (!service_files::load_public_file_detail(context.mysql, context.doc_root, file_id, record, actual_size, error))
     {
-        return conn.respond_json_error(error.status, error.title, error.message);
+        return respond_service_error(response, error);
     }
 
-    conn.set_memory_response(200, "OK", service_files::build_public_file_detail_json(record, actual_size),
-                             "application/json");
-    return HttpConnection::MEMORY_REQUEST;
+    response.set_body(200, "OK", service_files::build_public_file_detail_json(record, actual_size),
+                      "application/json");
+    return http_core::MEMORY_REQUEST;
 }
 
-HttpConnection::HTTP_CODE FileController::private_file_download(HttpConnection &conn, const char *path)
+http_core::HttpCode FileController::private_file_download(http_core::HttpRequest &request,
+                                                          http_core::RequestContext &context,
+                                                          http_core::HttpResponse &response,
+                                                          const char *path)
 {
-    HttpConnection::HTTP_CODE auth_code = conn.require_user_session("file download requires user session");
-    if (auth_code != HttpConnection::NO_REQUEST)
+    (void)request;
+    http_core::HttpCode auth_code = require_user_session(context, response, "file download requires user session");
+    if (auth_code != http_core::NO_REQUEST)
     {
         return auth_code;
     }
@@ -363,57 +565,56 @@ HttpConnection::HTTP_CODE FileController::private_file_download(HttpConnection &
     long file_id = strtol(path, &endptr, 10);
     if (endptr == path || strcmp(endptr, "/download") != 0)
     {
-        return HttpConnection::BAD_REQUEST;
+        return http_core::BAD_REQUEST;
     }
 
     ManagedFileRecord record;
     service_files::ServiceError error;
-    if (!service_files::load_owned_file_record(conn.mysql, conn.m_current_user, file_id, record, error))
+    if (!service_files::load_owned_file_record(context.mysql, context.current_user, file_id, record, error))
     {
-        return conn.respond_json_error(error.status, error.title, error.message);
+        return respond_service_error(response, error);
     }
 
-    if (!conn.open_managed_file(infra_storage::file_path(conn.doc_root, record.stored_name),
-                                record.content_type, record.original_name))
-    {
-        return conn.respond_json_error(404, "Not Found", "file content not found");
-    }
-
-    conn.write_operation_log(conn.m_current_user, "download", "file", file_id, record.original_name);
-    return HttpConnection::FILE_REQUEST;
+    response.set_file(infra_storage::file_path(context.doc_root, record.stored_name),
+                      record.content_type, record.original_name);
+    write_operation_log(context.mysql, context.current_user, "download", "file", file_id, record.original_name);
+    return http_core::FILE_REQUEST;
 }
 
-HttpConnection::HTTP_CODE FileController::public_file_download(HttpConnection &conn, const char *path)
+http_core::HttpCode FileController::public_file_download(http_core::HttpRequest &request,
+                                                         http_core::RequestContext &context,
+                                                         http_core::HttpResponse &response,
+                                                         const char *path)
 {
+    (void)request;
     char *endptr = nullptr;
     long file_id = strtol(path, &endptr, 10);
     if (endptr == path || strcmp(endptr, "/download") != 0)
     {
-        return HttpConnection::BAD_REQUEST;
+        return http_core::BAD_REQUEST;
     }
 
     ManagedFileRecord record;
     service_files::ServiceError error;
-    if (!service_files::load_public_file_record(conn.mysql, file_id, record, error))
+    if (!service_files::load_public_file_record(context.mysql, file_id, record, error))
     {
-        return conn.respond_json_error(error.status, error.title, error.message);
+        return respond_service_error(response, error);
     }
 
-    if (!conn.open_managed_file(infra_storage::file_path(conn.doc_root, record.stored_name),
-                                record.content_type, record.original_name))
-    {
-        return conn.respond_json_error(404, "Not Found", "file content not found");
-    }
-
-    conn.write_operation_log(conn.m_current_user.empty() ? "guest" : conn.m_current_user,
-                             "public_download", "file", file_id, record.original_name);
-    return HttpConnection::FILE_REQUEST;
+    response.set_file(infra_storage::file_path(context.doc_root, record.stored_name),
+                      record.content_type, record.original_name);
+    write_operation_log(context.mysql, context.current_user.empty() ? "guest" : context.current_user,
+                        "public_download", "file", file_id, record.original_name);
+    return http_core::FILE_REQUEST;
 }
 
-HttpConnection::HTTP_CODE FileController::share_create(HttpConnection &conn, const char *path)
+http_core::HttpCode FileController::share_create(http_core::HttpRequest &request,
+                                                 http_core::RequestContext &context,
+                                                 http_core::HttpResponse &response,
+                                                 const char *path)
 {
-    HttpConnection::HTTP_CODE auth_code = conn.require_user_session("file share requires user session");
-    if (auth_code != HttpConnection::NO_REQUEST)
+    http_core::HttpCode auth_code = require_user_session(context, response, "file share requires user session");
+    if (auth_code != http_core::NO_REQUEST)
     {
         return auth_code;
     }
@@ -422,108 +623,110 @@ HttpConnection::HTTP_CODE FileController::share_create(HttpConnection &conn, con
     long file_id = strtol(path, &endptr, 10);
     if (endptr == path || strcmp(endptr, "/share") != 0)
     {
-        return HttpConnection::BAD_REQUEST;
+        return http_core::BAD_REQUEST;
     }
 
     service_files::ShareOptions options;
-    options.access_code = conn.request_value("access_code", "code");
+    options.access_code = request.value("access_code", "code");
 
-    const string expires_value = conn.request_value("expires_in_seconds", "expires_in");
+    const string expires_value = request.value("expires_in_seconds", "expires_in");
     if (!expires_value.empty() && !parse_non_negative_long(expires_value, options.expires_in_seconds))
     {
-        return conn.respond_json_error(400, "Bad Request", "invalid expires_in_seconds");
+        return respond_json_error(response, 400, "Bad Request", "invalid expires_in_seconds");
     }
-    const string max_downloads_value = conn.request_value("max_downloads", "download_limit");
+    const string max_downloads_value = request.value("max_downloads", "download_limit");
     if (!max_downloads_value.empty() && !parse_non_negative_long(max_downloads_value, options.max_downloads))
     {
-        return conn.respond_json_error(400, "Bad Request", "invalid max_downloads");
+        return respond_json_error(response, 400, "Bad Request", "invalid max_downloads");
     }
 
     service_files::ShareResult share;
     service_files::ServiceError error;
-    if (!service_files::create_share_link(conn.mysql, conn.m_current_user, file_id, options, share, error))
+    if (!service_files::create_share_link(context.mysql, context.current_user, file_id, options, share, error))
     {
-        if (error.message.empty())
-        {
-            return HttpConnection::INTERNAL_ERROR;
-        }
-        return conn.respond_json_error(error.status, error.title, error.message);
+        return respond_service_error(response, error);
     }
 
-    conn.write_operation_log(conn.m_current_user, "create_share", "file", file_id, share.filename);
-    conn.set_memory_response(200, "OK", service_files::build_share_json(share), "application/json");
-    return HttpConnection::MEMORY_REQUEST;
+    write_operation_log(context.mysql, context.current_user, "create_share", "file", file_id, share.filename);
+    response.set_body(200, "OK", service_files::build_share_json(share), "application/json");
+    return http_core::MEMORY_REQUEST;
 }
 
-HttpConnection::HTTP_CODE FileController::share_detail(HttpConnection &conn, const char *path)
+http_core::HttpCode FileController::share_detail(http_core::HttpRequest &request,
+                                                 http_core::RequestContext &context,
+                                                 http_core::HttpResponse &response,
+                                                 const char *path)
 {
     string token;
     if (!parse_share_path(path, false, token))
     {
-        return HttpConnection::BAD_REQUEST;
+        return http_core::BAD_REQUEST;
     }
 
-    string access_code = conn.request_value("access_code", "code");
+    string access_code = request.value("access_code", "code");
     if (access_code.empty())
     {
-        access_code = conn.query_value("access_code");
+        access_code = request.query_value("access_code");
     }
     if (access_code.empty())
     {
-        access_code = conn.query_value("code");
+        access_code = request.query_value("code");
     }
 
     service_files::ShareResult share;
     service_files::ServiceError error;
-    if (!service_files::load_share_detail(conn.mysql, token, access_code, share, error))
+    if (!service_files::load_share_detail(context.mysql, token, access_code, share, error))
     {
-        return conn.respond_json_error(error.status, error.title, error.message);
+        return respond_service_error(response, error);
     }
 
-    conn.set_memory_response(200, "OK", service_files::build_share_json(share), "application/json");
-    return HttpConnection::MEMORY_REQUEST;
+    response.set_body(200, "OK", service_files::build_share_json(share), "application/json");
+    return http_core::MEMORY_REQUEST;
 }
 
-HttpConnection::HTTP_CODE FileController::share_download(HttpConnection &conn, const char *path)
+http_core::HttpCode FileController::share_download(http_core::HttpRequest &request,
+                                                   http_core::RequestContext &context,
+                                                   http_core::HttpResponse &response,
+                                                   const char *path)
 {
     string token;
     if (!parse_share_path(path, true, token))
     {
-        return HttpConnection::BAD_REQUEST;
+        return http_core::BAD_REQUEST;
     }
 
-    string access_code = conn.request_value("access_code", "code");
+    string access_code = request.value("access_code", "code");
     if (access_code.empty())
     {
-        access_code = conn.query_value("access_code");
+        access_code = request.query_value("access_code");
     }
     if (access_code.empty())
     {
-        access_code = conn.query_value("code");
+        access_code = request.query_value("code");
     }
 
     ManagedFileRecord record;
     service_files::ShareResult share;
     service_files::ServiceError error;
-    if (!service_files::load_share_download(conn.mysql, token, access_code, record, share, error))
+    if (!service_files::load_share_download(context.mysql, token, access_code, record, share, error))
     {
-        return conn.respond_json_error(error.status, error.title, error.message);
+        return respond_service_error(response, error);
     }
 
-    if (!conn.open_managed_file(infra_storage::file_path(conn.doc_root, record.stored_name),
-                                record.content_type, record.original_name))
-    {
-        return conn.respond_json_error(404, "Not Found", "file content not found");
-    }
-
-    conn.write_operation_log("guest", "share_download", "file", record.file_id, record.original_name);
-    return HttpConnection::FILE_REQUEST;
+    response.set_file(infra_storage::file_path(context.doc_root, record.stored_name),
+                      record.content_type, record.original_name);
+    write_operation_log(context.mysql, "guest", "share_download", "file", record.file_id, record.original_name);
+    return http_core::FILE_REQUEST;
 }
 
-HttpConnection::HTTP_CODE FileController::remove(HttpConnection &conn, const char *path)
+http_core::HttpCode FileController::remove(http_core::HttpRequest &request,
+                                           http_core::RequestContext &context,
+                                           http_core::HttpResponse &response,
+                                           const char *path)
 {
-    HttpConnection::HTTP_CODE auth_code = conn.require_user_session("file delete requires user session");
-    if (auth_code != HttpConnection::NO_REQUEST)
+    (void)request;
+    http_core::HttpCode auth_code = require_user_session(context, response, "file delete requires user session");
+    if (auth_code != http_core::NO_REQUEST)
     {
         return auth_code;
     }
@@ -532,65 +735,30 @@ HttpConnection::HTTP_CODE FileController::remove(HttpConnection &conn, const cha
     long file_id = strtol(path, &endptr, 10);
     if (endptr == path || *endptr != '\0')
     {
-        return HttpConnection::BAD_REQUEST;
+        return http_core::BAD_REQUEST;
     }
 
     ManagedFileRecord record;
     service_files::ServiceError error;
-    if (!service_files::soft_delete_file(conn.mysql, conn.m_current_user, file_id, record, error))
+    if (!service_files::soft_delete_file(context.mysql, context.current_user, file_id, record, error))
     {
-        if (error.message.empty())
-        {
-            return HttpConnection::INTERNAL_ERROR;
-        }
-        return conn.respond_json_error(error.status, error.title, error.message);
+        return respond_service_error(response, error);
     }
 
-    conn.write_operation_log(conn.m_current_user, "delete", "file", file_id, record.original_name);
-    conn.set_memory_response(200, "OK", "{\"code\":0,\"message\":\"file moved to recycle bin\"}",
-                             "application/json");
-    return HttpConnection::MEMORY_REQUEST;
+    write_operation_log(context.mysql, context.current_user, "delete", "file", file_id, record.original_name);
+    response.set_body(200, "OK", "{\"code\":0,\"message\":\"file moved to recycle bin\"}",
+                      "application/json");
+    return http_core::MEMORY_REQUEST;
 }
 
-HttpConnection::HTTP_CODE FileController::update_visibility(HttpConnection &conn, const char *path)
+http_core::HttpCode FileController::restore(http_core::HttpRequest &request,
+                                            http_core::RequestContext &context,
+                                            http_core::HttpResponse &response,
+                                            const char *path)
 {
-    HttpConnection::HTTP_CODE auth_code = conn.require_user_session("file visibility update requires user session");
-    if (auth_code != HttpConnection::NO_REQUEST)
-    {
-        return auth_code;
-    }
-
-    char *endptr = nullptr;
-    long file_id = strtol(path, &endptr, 10);
-    if (endptr == path || strcmp(endptr, "/visibility") != 0)
-    {
-        return HttpConnection::BAD_REQUEST;
-    }
-
-    ManagedFileRecord record;
-    service_files::ServiceError error;
-    const bool is_public = service_files::parse_public_flag(conn.request_value("is_public"));
-    if (!service_files::update_file_visibility(conn.mysql, conn.m_current_user, file_id, is_public, record, error))
-    {
-        if (error.message.empty())
-        {
-            return HttpConnection::INTERNAL_ERROR;
-        }
-        return conn.respond_json_error(error.status, error.title, error.message);
-    }
-
-    conn.write_operation_log(conn.m_current_user, is_public ? "publish" : "unpublish", "file", file_id, record.original_name);
-    conn.set_memory_response(200, "OK",
-                             is_public ? "{\"code\":0,\"message\":\"file is now public\"}"
-                                       : "{\"code\":0,\"message\":\"file is now private\"}",
-                             "application/json");
-    return HttpConnection::MEMORY_REQUEST;
-}
-
-HttpConnection::HTTP_CODE FileController::restore(HttpConnection &conn, const char *path)
-{
-    HttpConnection::HTTP_CODE auth_code = conn.require_user_session("file restore requires user session");
-    if (auth_code != HttpConnection::NO_REQUEST)
+    (void)request;
+    http_core::HttpCode auth_code = require_user_session(context, response, "file restore requires user session");
+    if (auth_code != http_core::NO_REQUEST)
     {
         return auth_code;
     }
@@ -599,24 +767,85 @@ HttpConnection::HTTP_CODE FileController::restore(HttpConnection &conn, const ch
     long file_id = strtol(path, &endptr, 10);
     if (endptr == path || strcmp(endptr, "/restore") != 0)
     {
-        return HttpConnection::BAD_REQUEST;
+        return http_core::BAD_REQUEST;
     }
 
     ManagedFileRecord record;
     service_files::ServiceError error;
-    string restored_name;
-    if (!service_files::restore_file(conn.mysql, conn.doc_root, conn.m_current_user, file_id, record, restored_name, error))
+    if (!service_files::restore_file(context.mysql, context.current_user, file_id, record, error))
     {
-        if (error.message.empty())
-        {
-            return HttpConnection::INTERNAL_ERROR;
-        }
-        return conn.respond_json_error(error.status, error.title, error.message);
+        return respond_service_error(response, error);
     }
 
-    conn.write_operation_log(conn.m_current_user, "restore", "file", file_id, restored_name);
-    conn.set_memory_response(200, "OK", service_files::build_restore_success_json(file_id, restored_name),
-                             "application/json");
-    return HttpConnection::MEMORY_REQUEST;
+    write_operation_log(context.mysql, context.current_user, "restore", "file", file_id, record.original_name);
+    response.set_body(200, "OK", service_files::build_file_restored_json(record), "application/json");
+    return http_core::MEMORY_REQUEST;
+}
+
+http_core::HttpCode FileController::remove_permanently(http_core::HttpRequest &request,
+                                                       http_core::RequestContext &context,
+                                                       http_core::HttpResponse &response,
+                                                       const char *path)
+{
+    (void)request;
+    http_core::HttpCode auth_code = require_user_session(context, response, "file permanent delete requires user session");
+    if (auth_code != http_core::NO_REQUEST)
+    {
+        return auth_code;
+    }
+
+    char *endptr = nullptr;
+    long file_id = strtol(path, &endptr, 10);
+    if (endptr == path || strcmp(endptr, "/permanent") != 0)
+    {
+        return http_core::BAD_REQUEST;
+    }
+
+    ManagedFileRecord record;
+    service_files::ServiceError error;
+    if (!service_files::hard_delete_file(context.mysql, context.doc_root, context.current_user, file_id, record, error))
+    {
+        return respond_service_error(response, error);
+    }
+
+    write_operation_log(context.mysql, context.current_user, "purge", "file", file_id, record.original_name);
+    response.set_body(200, "OK", "{\"code\":0,\"message\":\"file permanently deleted\"}",
+                      "application/json");
+    return http_core::MEMORY_REQUEST;
+}
+
+http_core::HttpCode FileController::update_visibility(http_core::HttpRequest &request,
+                                                      http_core::RequestContext &context,
+                                                      http_core::HttpResponse &response,
+                                                      const char *path)
+{
+    http_core::HttpCode auth_code = require_user_session(context, response, "file visibility update requires user session");
+    if (auth_code != http_core::NO_REQUEST)
+    {
+        return auth_code;
+    }
+
+    char *endptr = nullptr;
+    long file_id = strtol(path, &endptr, 10);
+    if (endptr == path || strcmp(endptr, "/visibility") != 0)
+    {
+        return http_core::BAD_REQUEST;
+    }
+
+    ManagedFileRecord record;
+    service_files::ServiceError error;
+    const bool is_public = service_files::parse_public_flag(request.value("is_public"));
+    if (!service_files::update_file_visibility(context.mysql, context.current_user, file_id, is_public, record, error))
+    {
+        return respond_service_error(response, error);
+    }
+
+    write_operation_log(context.mysql, context.current_user, is_public ? "publish" : "unpublish",
+                        "file", file_id, record.original_name);
+    response.set_body(200, "OK",
+                      is_public ? "{\"code\":0,\"message\":\"file is now public\"}"
+                                : "{\"code\":0,\"message\":\"file is now private\"}",
+                      "application/json");
+    return http_core::MEMORY_REQUEST;
 }
 }

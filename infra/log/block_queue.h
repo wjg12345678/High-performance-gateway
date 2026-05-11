@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <pthread.h>
 #include <sys/time.h>
+#include <utility>
 #include "../lock/locker.h"
 using namespace std;
 
@@ -55,6 +56,26 @@ public:
         m_mutex.lock();
         m_closed = true;
         m_cond.broadcast();
+        m_mutex.unlock();
+        return true;
+    }
+
+    bool push(T &&item)
+    {
+
+        m_mutex.lock();
+        if (m_closed || m_size >= m_max_size)
+        {
+            m_mutex.unlock();
+            return false;
+        }
+
+        m_back = (m_back + 1) % m_max_size;
+        m_array[m_back] = std::move(item);
+
+        m_size++;
+
+        m_cond.signal();
         m_mutex.unlock();
         return true;
     }
@@ -132,7 +153,7 @@ public:
         m_mutex.unlock();
         return tmp;
     }
-    //往队列添加元素，需要将所有使用队列的线程先唤醒
+    //往队列添加元素，唤醒一个等待的消费者线程
     //当有元素push进队列,相当于生产者生产了一个元素
     //若当前没有线程等待条件变量,则唤醒无意义
     bool push(const T &item)
@@ -150,7 +171,7 @@ public:
 
         m_size++;
 
-        m_cond.broadcast();
+        m_cond.signal();
         m_mutex.unlock();
         return true;
     }
@@ -176,7 +197,23 @@ public:
         }
 
         m_front = (m_front + 1) % m_max_size;
-        item = m_array[m_front];
+        item = std::move(m_array[m_front]);
+        m_size--;
+        m_mutex.unlock();
+        return true;
+    }
+
+    bool try_pop(T &item)
+    {
+        m_mutex.lock();
+        if (m_size <= 0)
+        {
+            m_mutex.unlock();
+            return false;
+        }
+
+        m_front = (m_front + 1) % m_max_size;
+        item = std::move(m_array[m_front]);
         m_size--;
         m_mutex.unlock();
         return true;
@@ -212,7 +249,7 @@ public:
         }
 
         m_front = (m_front + 1) % m_max_size;
-        item = m_array[m_front];
+        item = std::move(m_array[m_front]);
         m_size--;
         m_mutex.unlock();
         return true;

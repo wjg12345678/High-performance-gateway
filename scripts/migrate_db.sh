@@ -8,8 +8,8 @@ MIGRATIONS_DIR="${MIGRATIONS_DIR:-$REPO_ROOT/migrations}"
 
 DB_HOST="${TWS_DB_HOST:-127.0.0.1}"
 DB_PORT="${TWS_DB_PORT:-3306}"
-DB_USER="${TWS_DB_USER:-root}"
-DB_PASSWORD="${TWS_DB_PASSWORD:-}"
+DB_USER="${TWS_MIGRATION_DB_USER:-${TWS_DB_USER:-root}}"
+DB_PASSWORD="${TWS_MIGRATION_DB_PASSWORD:-${TWS_DB_PASSWORD:-}}"
 DB_NAME="${TWS_DB_NAME:-qgydb}"
 
 if [ ! -d "$MIGRATIONS_DIR" ]; then
@@ -48,6 +48,12 @@ for migration in "$MIGRATIONS_DIR"/*.sql; do
     if [ "$applied" = "1" ]; then
         echo "[migrate] skip $version"
         continue
+    fi
+
+    if grep -Eiq '^[[:space:]]*DROP[[:space:]]+TABLE' "$migration"; then
+        echo "[migrate] refusing destructive DROP TABLE in $version" >&2
+        echo "[migrate] use scripts/dev_reset_schema.sql only for explicit development resets" >&2
+        exit 1
     fi
 
     echo "[migrate] apply $version"

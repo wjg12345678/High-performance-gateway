@@ -20,8 +20,8 @@ jobs:
       - name: CMake configure
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
 
-      - name: CMake build server
-        run: cmake --build build --target server --parallel
+      - name: CMake build server and unit tests
+        run: cmake --build build --target server atlas-unit-tests --parallel
 
       - name: CTest unit tests
         run: ctest --test-dir build --output-on-failure
@@ -62,7 +62,7 @@ jobs:
       - name: Build sanitizer targets with CMake
         run: |
           cmake -S . -B build-sanitize -G Ninja -DCMAKE_BUILD_TYPE=Debug -DATLAS_ENABLE_SANITIZERS=ON
-          cmake --build build-sanitize --target server parser-chunked-test --parallel
+          cmake --build build-sanitize --target server atlas-unit-tests --parallel
           ASAN_OPTIONS=detect_leaks=0:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 ctest --test-dir build-sanitize --output-on-failure
 
       - name: Initialize MySQL schema

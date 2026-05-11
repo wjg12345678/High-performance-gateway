@@ -1,17 +1,27 @@
 #ifndef HTTP_CONTROLLERS_AUTH_CONTROLLER_H
 #define HTTP_CONTROLLERS_AUTH_CONTROLLER_H
 
-#include "../core/connection.h"
+#include "../core/http_message.h"
 
 namespace http_controllers
 {
 class AuthController
 {
 public:
-    static HttpConnection::HTTP_CODE login(HttpConnection &conn, bool api_mode);
-    static HttpConnection::HTTP_CODE register_user(HttpConnection &conn, bool api_mode);
-    static HttpConnection::HTTP_CODE logout(HttpConnection &conn);
-    static HttpConnection::HTTP_CODE ping(HttpConnection &conn);
+    static http_core::HttpCode login(const http_core::HttpRequest &request,
+                                     http_core::RequestContext &context,
+                                     http_core::HttpResponse &response,
+                                     bool api_mode);
+    static http_core::HttpCode register_user(const http_core::HttpRequest &request,
+                                             http_core::RequestContext &context,
+                                             http_core::HttpResponse &response,
+                                             bool api_mode);
+    static http_core::HttpCode logout(const http_core::HttpRequest &request,
+                                      http_core::RequestContext &context,
+                                      http_core::HttpResponse &response);
+    static http_core::HttpCode ping(const http_core::HttpRequest &request,
+                                    http_core::RequestContext &context,
+                                    http_core::HttpResponse &response);
 };
 }
 

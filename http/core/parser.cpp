@@ -231,7 +231,21 @@ HttpConnection::HTTP_CODE HttpConnection::parse_headers(char *text)
         }
         return GET_REQUEST;
     }
-    else if (strncasecmp(text, "Connection:", 11) == 0)
+
+    char *header_colon = strchr(text, ':');
+    if (header_colon != nullptr)
+    {
+        string header_name(text, header_colon - text);
+        char *header_value = header_colon + 1;
+        header_value += strspn(header_value, " \t");
+        header_name = http_core::lowercase_copy(http_core::trim_copy(header_name));
+        if (!header_name.empty())
+        {
+            m_headers[header_name] = http_core::trim_copy(header_value);
+        }
+    }
+
+    if (strncasecmp(text, "Connection:", 11) == 0)
     {
         text += 11;
         text += strspn(text, " \t");
