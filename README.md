@@ -1,127 +1,320 @@
 # Atlas WebServer
 
-![C++](https://img.shields.io/badge/C%2B%2B-14-blue)
-![Linux](https://img.shields.io/badge/Linux-epoll%20%2B%20pthread-0f766e)
-![HTTP](https://img.shields.io/badge/HTTP-1.1%20%2B%20HTTPS-b45309)
+![C++17](https://img.shields.io/badge/C%2B%2B-17-blue)
+![Linux](https://img.shields.io/badge/Linux-epoll%20%2B%20Reactor-0f766e)
+![HTTP](https://img.shields.io/badge/HTTP-1.1%20%2B%20multipart-b45309)
 ![MySQL](https://img.shields.io/badge/MySQL-8.x-2563eb)
+![Redis](https://img.shields.io/badge/Redis-rate%20limit-dc2626)
 ![Build](https://img.shields.io/badge/Build-CMake%20%2B%20Docker-7c3aed)
 
-Atlas WebServer 是一个面向学习、面试展示和小型网盘场景的 C++ Linux WebServer 后端。项目从传统 `epoll + 线程池 + MySQL` 服务器演进为带有账号体系、Bearer Token 会话、文件网盘、公开分享、上传配额、操作审计、数据库迁移、单测、Sanitizer CI 和 benchmark 工具链的完整工程。
+Atlas WebServer 是一个基于 C++17 的 Linux 网盘后端项目。项目从自研 WebServer 演进而来，底层保留 `epoll`、非阻塞 socket、主从 Reactor、线程池、HTTP/1.1 parser、chunked 和 multipart 解析、MySQL 连接池等网络编程能力；业务层实现账号会话、文件上传下载、目录、回收站、公开分享、操作审计、SHA-256 去重、配额控制、Redis 登录/注册限流和 Docker 部署验证。
 
-项目保留底层网络编程能力：非阻塞 socket、ET/LT 触发模式、主从 Reactor、动态线程池、HTTP/1.1 parser、chunked 请求体、multipart 流式上传、OpenSSL TLS、MySQL C API；同时也在持续工程化重构：HTTP 层已拆出 `controller / service / repository / infra` 分层，避免业务逻辑继续堆进 `HttpConnection`。
+这个仓库定位为 **Atlas 后端服务**。前端 Vue/Vite 管理台在兄弟目录 `Atlas-Frontend`；通用分布式限流组件在独立项目 `Redis-Limiter`。Atlas 不再内嵌限流算法源码，只保留登录/注册场景的业务适配层。
 
-## 功能概览
+## 目录
+
+- [项目定位](#项目定位)
+- [核心能力](#核心能力)
+- [系统架构](#系统架构)
+- [请求链路](#请求链路)
+- [模块分层](#模块分层)
+- [数据库设计](#数据库设计)
+- [文件存储与一致性](#文件存储与一致性)
+- [认证与限流](#认证与限流)
+- [API 概览](#api-概览)
+- [快速启动](#快速启动)
+- [配置说明](#配置说明)
+- [测试与验证](#测试与验证)
+- [性能与压测](#性能与压测)
+- [生产化边界](#生产化边界)
+- [简历与面试讲法](#简历与面试讲法)
+- [文档索引](#文档索引)
+
+## 项目定位
+
+Atlas WebServer 不是把成熟 Web 框架套在 CRUD 上，而是从 Linux 网络服务一路做到网盘业务闭环：
+
+- 底层：非阻塞 socket、epoll、ET/LT、EPOLLONESHOT、主从 Reactor、线程池、连接超时、Keep-Alive。
+- 协议：HTTP/1.1 请求解析、Header/Query/Form/JSON 解析、chunked body、multipart/form-data、文件下载响应。
+- 业务：注册登录、Bearer Token 会话、目录、文件上传下载、回收站、恢复、彻底删除、公开分享、分享码、下载次数限制。
+- 数据：MySQL schema 迁移、逻辑文件/物理文件双表、SHA-256 去重、引用计数、操作审计。
+- 工程：CMake、Docker Compose、自动迁移、单测、smoke、并发一致性脚本、benchmark、Sanitizer/coverage/format 检查。
+
+推荐在简历中把它写成：
+
+```text
+Atlas｜C++ Linux 网盘系统
+
+基于 C++17、epoll、主从 Reactor、线程池、MySQL、Redis 和 Vue/Vite 实现的前后端分离网盘系统，支持账号会话、文件上传下载、目录、回收站、公开分享、操作审计、SHA-256 去重、上传配额、登录/注册限流、Docker Compose 部署和自动化回归验证。
+```
+
+## 核心能力
 
 | 模块 | 能力 |
 | --- | --- |
-| 网络模型 | 主 Reactor accept，多个 SubReactor 处理连接事件，线程池执行业务任务 |
-| HTTP 协议 | HTTP/1.1、Keep-Alive、JSON API、文件下载响应、HEAD/OPTIONS、可选 HTTPS |
-| 请求体解析 | `application/json`、`x-www-form-urlencoded`、`multipart/form-data`、`Transfer-Encoding: chunked` |
-| 认证会话 | 注册、登录、PBKDF2-HMAC-SHA256 密码存储、Bearer Token、滑动过期、注销当前/全部会话 |
-| 文件网盘 | 目录列表、创建/删除空目录、上传、列表、下载、回收站、恢复、彻底删除、公开/取消公开 |
-| 上传治理 | 单文件大小限制、用户总容量限制、上传前 preflight 校验、临时文件落盘、SHA-256 去重 |
-| 分享能力 | 公开文件列表、公开下载、带 token 的分享链接、访问码、过期时间、下载次数限制 |
-| 审计日志 | 登录、上传、下载、删除、分享、鉴权失败等操作日志 |
-| 工程化 | CMake、Docker Compose、数据库迁移、单元测试、覆盖率、clang-format、ASan/UBSan CI |
-| 性能工具 | wrk 压测脚本、benchmark CSV、容器 stats 采样、perf flamegraph 文档 |
+| 网络模型 | 主 Reactor 监听 `listenfd` 并 accept，多个 SubReactor 负责连接读写事件，线程池执行业务任务 |
+| I/O 模型 | 非阻塞 socket、ET/LT 触发模式、EPOLLONESHOT、连接超时、Keep-Alive |
+| HTTP | HTTP/1.1、JSON API、form-urlencoded、chunked、multipart、HEAD/OPTIONS、文件下载响应、可选 HTTPS |
+| 认证 | 注册、登录、PBKDF2-HMAC-SHA256 密码哈希、随机 token、Bearer Token、滑动过期、登出当前/全部会话 |
+| 限流 | 登录 IP、登录用户名、注册 IP 三个维度限流；通过外部 Redis-Limiter 组件实现 Redis 令牌桶和本地降级 |
+| 文件网盘 | 目录列表、创建/删除空目录、上传、下载、回收站、恢复、彻底删除、公开/取消公开 |
+| 上传治理 | 单文件大小限制、用户总容量限制、preflight、临时文件落盘、SHA-256 去重、失败清理 |
+| 分享 | 分享 token、访问码 hash、过期时间、最大下载次数、公开文件列表、公开下载 |
+| 审计 | 登录、注册、上传、下载、删除、恢复、分享、限流等操作日志 |
+| 数据库 | MySQL 8、版本化迁移、外键、唯一索引、CHECK、trigger 维护 `ref_count` |
+| 工程验证 | CTest、shell smoke、并发上传、配额竞争、分享竞争、故障注入、DB/磁盘一致性巡检 |
 
-前端页面、样式和 Vite 构建已拆到兄弟目录 `../Atlas-Frontend`。本仓库不再托管页面静态资源，直接访问非 `/api/*` 路径会返回 JSON 404。
+## 系统架构
 
-## 快速开始
-
-### Docker Compose 推荐路径
-
-完整部署从父目录 `/home/ubuntu/Atlas` 启动三容器编排：
-
-```bash
-cd ..
-cp .env.example .env
-docker compose up -d --build
-curl -i http://127.0.0.1:8080/healthz
+```text
+Browser / curl / wrk
+        |
+        v
+Frontend Nginx / reverse proxy
+        |
+        v
+Atlas WebServer
+  MainReactor
+    -> accept
+    -> dispatch connfd
+  SubReactors
+    -> epoll_wait(EPOLLIN / EPOLLOUT)
+    -> read_once / write
+  ThreadPool
+    -> HttpConnection::process
+    -> Router
+    -> Controller
+    -> Service
+    -> Repository
+        |
+        +--> MySQL
+        +--> Redis-Limiter -> Redis
+        +--> Local disk storage
 ```
 
-默认端口：
+### 主从 Reactor
 
-| 服务 | 地址 |
+`app/webserver.cpp` 中主 Reactor 创建 `m_epollfd`，只监听 `listenfd`。新连接到来时 `dealclientdata()` accept，然后按轮询方式分发给某个 SubReactor。
+
+`app/webserver_sub_reactor.cpp` 中每个 SubReactor 自己持有一个 epoll 和一个 `eventfd`。主 Reactor 将 `connfd` 放入 pending 队列后写 `eventfd` 唤醒 SubReactor，SubReactor 再把连接注册到自己的 epoll 中。
+
+连接初始化时会调用 `addfd()`，设置非阻塞，并根据配置使用 `EPOLLET` 和 `EPOLLONESHOT`。`EPOLLONESHOT` 用来避免同一个连接同时被多个线程处理；处理完成后通过 `modfd()` 重新注册读写事件。
+
+### 线程池
+
+SubReactor 收到读事件后调用 `read_once()` 把数据读入连接缓冲区，再把 `HttpConnection` 投递到线程池。工作线程取得 MySQL 连接后执行 `HttpConnection::process()`，完成 HTTP 解析、路由分发、业务处理和响应生成。
+
+如果响应已经准备好，连接会切换到 `EPOLLOUT`，由 SubReactor 在 socket 可写时调用 `write()` 发送。这样不是“每连接一线程”，而是 epoll 管大量连接，线程池处理相对耗时的业务和数据库访问。
+
+## 请求链路
+
+以登录为例：
+
+```text
+POST /api/login
+  -> HttpConnection 解析 HTTP 请求
+  -> Router 匹配 /api/login
+  -> AuthController 读取 username/password
+  -> auth_service 校验 PBKDF2 密码
+  -> make_session_token 生成安全随机 token
+  -> session_repository 写入 user_sessions
+  -> 返回 JSON token
+```
+
+以文件上传为例：
+
+```text
+POST /api/drive/files/upload
+  -> Bearer Token 鉴权
+  -> multipart parser 流式解析文件 part
+  -> 临时文件写入 webroot/uploads/.tmp
+  -> 计算 SHA-256 和大小
+  -> Service 检查用户配额、目标目录、文件名冲突
+  -> physical_files 查重或插入
+  -> files 插入逻辑文件记录
+  -> 提交事务
+  -> 临时文件转正式存储或去重复用
+  -> 返回文件元数据
+```
+
+以永久删除为例：
+
+```text
+DELETE /api/drive/files/:id/permanent
+  -> 鉴权
+  -> SELECT file FOR UPDATE
+  -> 校验文件属于当前用户且在回收站
+  -> DELETE files
+  -> trigger 维护 physical_files.ref_count
+  -> ref_count=0 时删除 physical_files
+  -> commit
+  -> commit 后尝试删除磁盘物理文件
+```
+
+## 模块分层
+
+```text
+.
+|-- app/                  # main、配置、WebServer、MainReactor/SubReactor 编排
+|-- http/
+|   |-- core/             # HttpConnection、parser、IO、response、runtime
+|   |-- router/           # healthz/API 路由
+|   |-- controllers/      # Auth/File/Operation Controller
+|   `-- files/            # multipart parser、文件下载响应、文件辅助函数
+|-- service/
+|   |-- auth/             # 认证、密码、会话业务
+|   |-- files/            # 文件、目录、上传、分享业务
+|   `-- rate_limit/       # Atlas 登录/注册限流适配层
+|-- repo/mysql/           # Repository / SQL 封装
+|-- infra/                # db、storage、threadpool、timer、log、lock
+|-- migrations/           # 版本化 SQL 迁移
+|-- scripts/              # 迁移、测试、benchmark、coverage、format
+|-- tests/                # C++ 单元测试
+|-- docs/                 # 架构、API、迁移、性能、面试材料
+|-- docker/               # MySQL 初始化 SQL
+|-- deploy/               # Nginx 部署示例
+`-- webroot/uploads/      # 本地上传文件目录
+```
+
+分层职责：
+
+| 层 | 职责 |
 | --- | --- |
-| Frontend | `http://127.0.0.1:8080` |
-| Backend | Compose 内部 `backend:9006` |
-| MySQL | Compose 内部 `mysql:3306` |
+| `HttpConnection` | socket IO、HTTP 解析、请求/响应生命周期、上传临时文件生命周期 |
+| `Router` | 路由匹配、公共 API 分发、404/405 等协议错误 |
+| `Controller` | 参数读取、认证检查、HTTP 状态码和 JSON 响应适配 |
+| `Service` | 业务规则、事务边界、并发控制、失败处理 |
+| `Repository` | SQL 拼装、结果映射、数据库错误返回 |
+| `Infra` | 连接池、线程池、日志、定时器、存储等基础能力 |
 
-`frontend` 容器托管 Vue 构建产物，并把 `/api/` 和 `/healthz` 反代到 `backend` 容器。`backend` 容器启动前会执行 `scripts/migrate_db.sh`，自动应用 `migrations/` 下的 SQL。首次启动会初始化 MySQL schema 和默认测试账号。
+## 数据库设计
 
-停止服务：
+当前 schema 采用 `users.id` 作为主键，其他业务表通过 `user_id` 外键关联。
 
-```bash
-docker compose down
+| 表 | 作用 |
+| --- | --- |
+| `users` | 用户账号、密码哈希、登录时间、禁用状态 |
+| `user_sessions` | Bearer Token 会话、过期时间 |
+| `folders` | 用户目录，支持父子目录和软删除 |
+| `files` | 用户视角的逻辑文件，记录文件名、目录、大小、公开状态、删除状态 |
+| `physical_files` | 磁盘真实文件，按 SHA-256 去重，记录 `stored_name` 和 `ref_count` |
+| `file_shares` | 分享 token、访问码 hash、过期时间、下载次数 |
+| `operation_logs` | 操作审计，记录用户、动作、资源、详情、结果、IP、UA |
+| `schema_migrations` | 已执行迁移版本 |
+
+逻辑文件和物理文件拆分是项目的核心设计：
+
+```text
+files            用户能看到的文件记录
+physical_files   磁盘真实文件对象
+
+files.physical_id -> physical_files.id
 ```
 
-清理数据库卷：
+这样同一个物理内容可以被多个逻辑文件引用，支撑去重、秒传扩展和物理文件引用计数。
 
-```bash
-docker compose down -v
+迁移文件：
+
+| 文件 | 说明 |
+| --- | --- |
+| `001_init_schema.sql` | 初始化 schema |
+| `002_upgrade_existing_drive_dedup.sql` | 升级到目录 + 去重模型 |
+| `003_recycle_bin_ref_counts.sql` | 回收站与引用计数修正 |
+| `004_drop_passwd_salt.sql` | 清理旧密码字段 |
+| `005_normalize_schema.sql` | 迁移到 `users.id` 外键模型 |
+| `006_ref_count_triggers.sql` | 创建/校准 `ref_count` trigger |
+
+自动迁移入口是 `scripts/migrate_db.sh`。详细说明见 [docs/database-migrations.md](docs/database-migrations.md)。
+
+## 文件存储与一致性
+
+当前文件存储使用本地磁盘：
+
+```text
+webroot/uploads/
+  .tmp/                 # 上传临时文件
+  <stored_name>         # 正式物理文件
 ```
 
-### 本地构建
+上传一致性策略：
 
-依赖：Linux、CMake 3.16+、支持 C++17 的 `g++`、OpenSSL dev、MySQL client dev；启用 Redis 分布式限流时还需要 hiredis dev。
+- 请求体先流式落到临时文件，避免大文件常驻内存。
+- 计算 SHA-256 后进入数据库事务。
+- 锁定用户行进行配额检查，防止并发上传超配额。
+- `physical_files.sha256` 唯一索引防止并发插入同一物理文件。
+- `files` 唯一索引防止同一用户同一目录下活跃同名文件冲突。
+- DB 失败时清理临时文件或新物理文件。
+- 去重命中时删除本次临时文件，只新增逻辑文件记录。
 
-```bash
-./build.sh
-./build/server
-```
+删除一致性策略：
 
-本地直连 MySQL 时，先配置环境变量并执行迁移：
+- 普通删除是软删除，设置 `deleted_at`，文件进入回收站。
+- 恢复时检查原目录是否存在，必要时恢复到根目录，并自动处理同名冲突。
+- 永久删除在事务内删除逻辑文件和未引用物理记录。
+- 物理磁盘删除放在 DB commit 之后，失败时不会破坏用户视角；后续通过巡检脚本补偿清理。
 
-```bash
-TWS_DB_HOST=127.0.0.1 \
-TWS_DB_PORT=3306 \
-TWS_DB_USER=root \
-TWS_DB_PASSWORD=your_password \
-TWS_DB_NAME=qgydb \
-./scripts/migrate_db.sh
-```
-
-## 5 分钟主链路
+一致性检查：
 
 ```bash
-BASE_URL=http://127.0.0.1:9006
-USER_NAME=demo
-PASSWORD=123456
-
-curl -sS -X POST "$BASE_URL/api/register" \
-  -H 'Content-Type: application/json' \
-  -d "{\"username\":\"$USER_NAME\",\"passwd\":\"$PASSWORD\"}"
-
-LOGIN_JSON="$(curl -sS -X POST "$BASE_URL/api/login" \
-  -H 'Content-Type: application/json' \
-  -d "{\"username\":\"$USER_NAME\",\"passwd\":\"$PASSWORD\"}")"
-TOKEN="$(printf '%s' "$LOGIN_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')"
-
-printf 'hello atlas\n' > /tmp/atlas-demo.txt
-FILE_SIZE="$(wc -c < /tmp/atlas-demo.txt | tr -d ' ')"
-
-curl -sS -X POST "$BASE_URL/api/drive/files/preflight" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d "{\"size\":$FILE_SIZE,\"folder_id\":0}"
-
-UPLOAD_JSON="$(curl -sS -X POST "$BASE_URL/api/drive/files/upload" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H 'Expect:' \
-  -F 'file=@/tmp/atlas-demo.txt;type=text/plain' \
-  -F 'filename=atlas-demo.txt' \
-  -F 'is_public=false')"
-FILE_ID="$(printf '%s' "$UPLOAD_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["file"]["id"])')"
-
-curl -sS "$BASE_URL/api/drive/items?folder_id=0" \
-  -H "Authorization: Bearer $TOKEN" | python3 -m json.tool
-
-curl -i -sS "$BASE_URL/api/drive/files/$FILE_ID/download" \
-  -H "Authorization: Bearer $TOKEN"
+scripts/check_storage_consistency.sh --dry-run
+scripts/test_ref_count_consistency.sh
+scripts/test_upload_race_consistency.sh
+scripts/test_upload_failure_cleanup.sh
 ```
 
-更完整的现场复现步骤见 [docs/quickstart-5min.md](docs/quickstart-5min.md)。
+## 认证与限流
+
+### 密码与会话
+
+- 密码使用 PBKDF2-HMAC-SHA256 存储，不保存明文密码。
+- 每个密码有随机 salt 和固定迭代次数。
+- 登录成功后生成 32 字节安全随机 token，编码后写入 `user_sessions`。
+- 请求通过 `Authorization: Bearer <token>` 鉴权。
+- 会话支持过期、刷新、登出当前会话、登出全部会话。
+
+### Redis-Limiter 解耦
+
+Atlas 不再复制限流组件源码。限流分成两层：
+
+```text
+Redis-Limiter
+  -> 通用 C++ core
+  -> Redis 连接池
+  -> Lua 原子限流
+  -> TokenBucket / SlidingWindow
+  -> Redis 故障降级
+  -> Python binding
+
+Atlas service/rate_limit
+  -> 登录 IP 限流
+  -> 登录用户名限流
+  -> 注册 IP 限流
+  -> Atlas 配置读取
+  -> HTTP 429 响应适配
+```
+
+Atlas 通过 CMake 链接外部 target：
+
+```cmake
+redis_limiter::core
+```
+
+常见目录布局：
+
+```text
+workspace/
+|-- Atlas-WebServer/
+`-- Redis-Limiter/
+```
+
+构建时可以显式指定组件路径：
+
+```bash
+cmake -S . -B build \
+  -DATLAS_REDIS_LIMITER_ROOT=/path/to/Redis-Limiter
+```
+
+如果没有安装 hiredis 或找不到 Redis-Limiter，Atlas 会退回本地限流 fallback，保证后端仍能构建运行。
 
 ## API 概览
 
@@ -139,198 +332,255 @@ curl -i -sS "$BASE_URL/api/drive/files/$FILE_ID/download" \
 | 调试 | `POST /api/echo` |
 | 认证 | `POST /api/register`、`POST /api/login`、`GET /api/private/ping`、`POST /api/private/logout` |
 | 操作日志 | `GET /api/private/operations`、`DELETE /api/private/operations/:id` |
-| 文件管理 | `GET /api/drive/files/:id/download`、`DELETE /api/drive/files/:id`、`GET /api/drive/trash`、`POST /api/drive/files/:id/restore`、`DELETE /api/drive/files/:id/permanent`、`POST /api/drive/files/:id/share`、`POST /api/drive/files/:id/visibility` |
-| 网盘目录 | `GET /api/drive/items?folder_id=0`、`POST /api/drive/folders`、`DELETE /api/drive/folders/:id` |
-| 网盘文件 | `POST /api/drive/files/preflight`、`POST /api/drive/files/upload`、`GET /api/drive/files/:id/download`、`DELETE /api/drive/files/:id` |
+| 目录 | `GET /api/drive/items?folder_id=0`、`POST /api/drive/folders`、`DELETE /api/drive/folders/:id` |
+| 上传 | `POST /api/drive/files/preflight`、`POST /api/drive/files/upload` |
+| 文件 | `GET /api/drive/files/:id/download`、`DELETE /api/drive/files/:id`、`POST /api/drive/files/:id/visibility` |
+| 回收站 | `GET /api/drive/trash`、`DELETE /api/drive/trash`、`POST /api/drive/files/:id/restore`、`DELETE /api/drive/files/:id/permanent` |
 | 公开文件 | `GET /api/files/public`、`GET /api/files/public/:id`、`GET /api/files/public/:id/download` |
-| 分享链接 | `POST /api/drive/files/:id/share`、`GET /api/share/:token`、`GET /api/share/:token/download` |
+| 分享 | `POST /api/drive/files/:id/share`、`GET /api/share/:token`、`GET /api/share/:token/download` |
 
-详细字段、响应示例和错误码见 [docs/api.md](docs/api.md)。文件模块边界见 [docs/file-module.md](docs/file-module.md)。
+完整字段和响应示例见 [docs/api.md](docs/api.md)。
 
-## 架构分层
+## 快速启动
 
-```mermaid
-flowchart LR
-    Client[Browser / curl / wrk] --> HTTP[HttpConnection]
-    HTTP --> Router[Router]
-    Router --> Controller[Controller]
-    Controller --> Service[Service]
-    Service --> Repo[Repository]
-    Repo --> MySQL[(MySQL)]
-    Service --> Storage[infra/storage]
-    Storage --> Disk[(webroot/uploads)]
+### Docker Compose 全栈部署
+
+推荐从 Atlas 根目录启动完整前后端：
+
+```bash
+cp .env.example .env
+docker compose up -d --build
+curl -i http://127.0.0.1:${ATLAS_FRONTEND_PORT:-8080}/healthz
 ```
 
-| 层级 | 目录 | 职责 |
-| --- | --- | --- |
-| 启动层 | `app/` | 配置解析、daemon supervisor、WebServer 初始化、Reactor 编排 |
-| HTTP Core | `http/core/` | socket IO、HTTP parser、chunked parser、响应写回、连接生命周期 |
-| 路由层 | `http/router/` | 健康检查、API 分发和错误响应 |
-| Controller | `http/controllers/` | 认证、文件、操作日志等 HTTP 入口，负责参数校验和响应适配 |
-| HTTP 辅助 | `http/files/` | multipart 解析、文件下载响应和文件辅助函数 |
-| Service | `service/` | 认证、会话、文件、目录、上传配额、分享等业务编排；文件域已按 upload/share/core file service 拆分 |
-| Repository | `repo/mysql/` | SQL 访问、结果映射、schema 可用性检查 |
-| Infra | `infra/` | MySQL 连接池、存储、线程池、定时器、日志、锁封装 |
-| Webroot | `webroot/` | 上传文件存储根目录 |
+服务：
 
-当前已抽出的 controller：
-
-- `AuthController`：登录、注册、登出、`ping`
-- `FileController`：文件、网盘目录、公开文件、分享链接
-- `OperationController`：操作日志列表和删除
-
-当前请求流已经收敛为 `HttpConnection -> HttpRequest/RequestContext -> Router -> Controller -> Service -> Repository`。`HttpConnection` 负责 socket IO、HTTP 解析、上传临时文件生命周期和响应落地；router、middleware、controller 只依赖请求模型、响应模型和业务上下文。
-
-文件域内部进一步拆为 `service/files/upload_service.*`、`service/files/share_service.*` 和 `service/files/file_service.*`：上传服务负责 preflight、配额、去重落库和失败清理；分享服务负责 token、访问码、过期和下载次数；核心文件服务负责目录、回收站、可见性和下载前记录校验。
-
-## 文件与上传设计
-
-- 主上传路径使用 `multipart/form-data`，文件字段名默认 `file`。
-- multipart 请求体会先流式写入 `webroot/uploads/.tmp/`，再抽取文件 part，避免大文件整体常驻内存。
-- 单文件上限由 `upload_max_bytes` / `TWS_UPLOAD_MAX_BYTES` 控制，默认 `100 MiB`。
-- 单用户总容量由 `user_storage_quota_bytes` / `TWS_USER_STORAGE_QUOTA_BYTES` 控制，默认 `1 GiB`，`0` 表示不限制。
-- 前端和 API 可先调用 `/api/drive/files/preflight` 做上传前校验。
-- 服务端落库前会再次校验配额，防止绕过前端预检。
-- 文件内容计算 `SHA-256`，相同内容复用 `physical_files` 物理记录，`files` 表保存用户视角元数据。
-- 删除会先进入回收站，已删除文件不再出现在 Drive 目录列表中；回收站文件仍占用容量，彻底删除后释放。
-
-如果前面有 Nginx 反向代理，`client_max_body_size` 应不小于应用的 `upload_max_bytes`。示例见 [deploy/nginx/atlas-webserver.conf.example](deploy/nginx/atlas-webserver.conf.example)。
-
-## 数据库迁移
-
-项目使用版本化 SQL 管理 schema：
-
-| 文件 | 说明 |
+| 服务 | 说明 |
 | --- | --- |
-| `migrations/001_init_schema.sql` | 初始化完整 schema |
-| `migrations/002_upgrade_existing_drive_dedup.sql` | 升级旧文件表到目录 + 去重模型 |
-| `migrations/003_recycle_bin_ref_counts.sql` | 修正物理文件引用计数以支持回收站恢复/彻底删除 |
-| `migrations/005_normalize_schema.sql` | 保留旧表备份并迁移到 `users.id` 外键模型 |
-| `migrations/006_ref_count_triggers.sql` | 校准物理文件引用计数并确保触发器存在 |
-| `docker/mysql/init.sql` | Docker 新数据卷初始化 SQL |
-| `scripts/migrate_db.sh` | 本地/容器统一迁移入口 |
-| `scripts/dev_reset_schema.sql` | 开发环境显式重置 schema，不进入自动迁移链路 |
+| `frontend` | Nginx 托管 Vue/Vite 构建产物，并反代 `/api/` 到后端 |
+| `backend` | C++ Atlas WebServer |
+| `mysql` | MySQL 8 数据库 |
+| `redis` | Redis 限流后端 |
+| `mysql-backup` | 定时 MySQL dump 备份 |
 
-迁移记录写入 `schema_migrations`。自动迁移脚本会拒绝包含 `DROP TABLE` 的迁移文件；需要清空开发库时手动使用 `scripts/dev_reset_schema.sql`。应用启动阶段只检查 schema 是否可用，不再在 `WebServer` 启动流程里动态拼接 `CREATE TABLE` / `ALTER TABLE`。详细说明见 [docs/database-migrations.md](docs/database-migrations.md)。
+后端 Docker build 通过 `additional_contexts` 引入外部 Redis-Limiter。默认路径是 Atlas 根目录的兄弟目录：
 
-## 配置
+```text
+/home/ubuntu/
+|-- Atlas/
+`-- Redis-Limiter/
+```
 
-默认配置文件为 `server.conf`。环境变量优先级高于配置文件；生产环境建议使用环境变量注入数据库密码和证书路径。
+如果你的组件路径不同：
 
-| 配置项 | 环境变量 | 默认值 | 说明 |
-| --- | --- | --- | --- |
-| `port` | `TWS_PORT` | `9006` | Web 监听端口 |
-| `log_write` | `TWS_LOG_WRITE` | `1` | `0` 同步日志，`1` 异步日志 |
-| `log_level` | `TWS_LOG_LEVEL` | `1` | 日志级别 |
-| `trig_mode` | `TWS_TRIG_MODE` | `3` | epoll 模式，默认 listen ET + conn ET |
-| `opt_linger` | `TWS_OPT_LINGER` | `0` | socket linger 策略 |
-| `sql_num` | `TWS_SQL_NUM` | `8` | MySQL 连接池大小 |
-| `thread_num` | `TWS_THREAD_NUM` | `8` | SubReactor / 基础工作线程数 |
-| `threadpool_max_threads` | `TWS_THREADPOOL_MAX_THREADS` | `8` | 动态线程池最大线程数 |
-| `threadpool_idle_timeout` | `TWS_THREADPOOL_IDLE_TIMEOUT` | `30` | 动态线程空闲回收秒数 |
-| `threadpool_queue_mode` | `TWS_THREADPOOL_QUEUE_MODE` | `mutex` | 队列实现，支持 `mutex` / `lockfree` |
-| `mysql_idle_timeout` | `TWS_MYSQL_IDLE_TIMEOUT` | `60` | MySQL 连接空闲检查 |
-| `upload_max_bytes` | `TWS_UPLOAD_MAX_BYTES` | `104857600` | 单文件上传上限 |
-| `user_storage_quota_bytes` | `TWS_USER_STORAGE_QUOTA_BYTES` | `1073741824` | 单用户总容量上限，`0` 不限制 |
-| `conn_timeout` | `TWS_CONN_TIMEOUT` | `15` | HTTP 连接空闲超时 |
-| `daemon_mode` | `TWS_DAEMON_MODE` | `0` | daemon supervisor 模式 |
-| `pid_file` | `TWS_PID_FILE` | `./atlas-webserver.pid` | daemon pid 文件 |
-| `https_enable` | `TWS_HTTPS_ENABLE` | `0` | 是否开启 HTTPS |
-| `https_cert_file` | `TWS_HTTPS_CERT_FILE` | `./certs/server.crt` | TLS 证书 |
-| `https_key_file` | `TWS_HTTPS_KEY_FILE` | `./certs/server.key` | TLS 私钥 |
-| `legacy_compat` | `TWS_LEGACY_COMPAT` | `0` | 是否启用少量旧请求体兼容 |
-| `db_host` | `TWS_DB_HOST` | `127.0.0.1` | MySQL host |
-| `db_port` | `TWS_DB_PORT` | `3306` | MySQL port |
-| `db_user` | `TWS_DB_USER` | `root` | MySQL 用户 |
-| `db_password` | `TWS_DB_PASSWORD` | 空 | MySQL 密码 |
-| `db_name` | `TWS_DB_NAME` | `qgydb` | MySQL 数据库 |
+```bash
+REDIS_LIMITER_SRC=/path/to/Redis-Limiter docker compose up -d --build
+```
 
-## 构建、测试与质量检查
+### 后端独立部署
+
+在本仓库目录下启动后端、MySQL、Redis：
+
+```bash
+REDIS_LIMITER_SRC=../../Redis-Limiter docker compose up -d --build
+```
+
+如果你的 `Redis-Limiter` 与 `Atlas-WebServer` 是兄弟目录：
+
+```bash
+REDIS_LIMITER_SRC=../Redis-Limiter docker compose up -d --build
+```
+
+### 本地构建
+
+依赖：
+
+- Linux
+- CMake 3.16+
+- C++17 compiler
+- OpenSSL dev
+- MySQL client dev
+- 可选：hiredis dev
+- 可选：外部 Redis-Limiter 源码
+
+构建：
+
+```bash
+./build.sh
+./build/server
+```
+
+指定 Redis-Limiter：
+
+```bash
+cmake -S . -B build \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DATLAS_REDIS_LIMITER_ROOT=/path/to/Redis-Limiter
+cmake --build build --target server --parallel
+```
+
+## 5 分钟主链路
+
+```bash
+BASE_URL=http://127.0.0.1:9006
+USER_NAME=demo
+PASSWORD=123456
+
+curl -sS -X POST "$BASE_URL/api/register" \
+  -H 'Content-Type: application/json' \
+  -d "{\"username\":\"$USER_NAME\",\"passwd\":\"$PASSWORD\"}"
+
+LOGIN_JSON="$(curl -sS -X POST "$BASE_URL/api/login" \
+  -H 'Content-Type: application/json' \
+  -d "{\"username\":\"$USER_NAME\",\"passwd\":\"$PASSWORD\"}")"
+
+TOKEN="$(printf '%s' "$LOGIN_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')"
+
+printf 'hello atlas\n' > /tmp/atlas-demo.txt
+
+UPLOAD_JSON="$(curl -sS -X POST "$BASE_URL/api/drive/files/upload" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Expect:' \
+  -F 'file=@/tmp/atlas-demo.txt;type=text/plain' \
+  -F 'filename=atlas-demo.txt' \
+  -F 'is_public=false')"
+
+FILE_ID="$(printf '%s' "$UPLOAD_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["file"]["id"])')"
+
+curl -sS "$BASE_URL/api/drive/items?folder_id=0" \
+  -H "Authorization: Bearer $TOKEN" | python3 -m json.tool
+
+curl -i -sS "$BASE_URL/api/drive/files/$FILE_ID/download" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+更多步骤见 [docs/quickstart-5min.md](docs/quickstart-5min.md)。
+
+## 配置说明
+
+配置来源：
+
+1. `server.conf`
+2. 环境变量
+3. Docker Compose `.env`
+
+常用环境变量：
+
+| 环境变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `TWS_PORT` | `9006` | 后端监听端口 |
+| `TWS_DB_HOST` | `127.0.0.1` | MySQL host |
+| `TWS_DB_PORT` | `3306` | MySQL port |
+| `TWS_DB_USER` | `root` | MySQL 用户 |
+| `TWS_DB_PASSWORD` | 空 | MySQL 密码 |
+| `TWS_DB_NAME` | `qgydb` | MySQL 数据库 |
+| `TWS_SQL_NUM` | `8` | MySQL 连接池大小 |
+| `TWS_THREAD_NUM` | `8` | SubReactor / 基础工作线程数 |
+| `TWS_THREADPOOL_MAX_THREADS` | `8` | 动态线程池最大线程数 |
+| `TWS_THREADPOOL_QUEUE_MODE` | `mutex` | 线程池队列，支持 `mutex` / `lockfree` |
+| `TWS_UPLOAD_MAX_BYTES` | `104857600` | 单文件上传上限 |
+| `TWS_USER_STORAGE_QUOTA_BYTES` | `1073741824` | 单用户容量上限，`0` 不限制 |
+| `TWS_CONN_TIMEOUT` | `15` | HTTP 连接空闲超时 |
+| `TWS_AUTH_RATE_LIMIT_ENABLED` | `1` | 是否启用认证限流 |
+| `TWS_REDIS_HOST` | `redis` in compose | Redis host |
+| `TWS_REDIS_PORT` | `6379` | Redis port |
+| `TWS_AUTH_RATE_LIMIT_FALLBACK_MODE` | `local` | Redis 失败时的降级策略 |
+
+HTTPS、日志、daemon、legacy compatibility 等更多配置见 [server.conf](server.conf) 和 [app/config.cpp](app/config.cpp)。
+
+## 测试与验证
 
 | 命令 | 说明 |
 | --- | --- |
-| `./build.sh` | CMake Release/Debug 构建，输出 `build/server` |
-| `cmake -S . -B build && cmake --build build -j` | 手动 CMake 构建 |
 | `scripts/run_unit_tests.sh` | CTest 单元测试入口 |
-| `scripts/run_coverage.sh` | parser 覆盖率 smoke；安装 `gcovr` 时生成 HTML |
-| `scripts/format_check.sh check` | `clang-format` 检查 |
-| `scripts/format_check.sh fix` | 自动格式化 C++ 代码 |
-| `scripts/migrate_db.sh` | 应用数据库迁移 |
-| `scripts/run_smoke_suite.sh` | 认证、私有 API、文件、Drive、ref-count、并发上传、存储一致性、分享、chunked API 冒烟测试 |
-| `scripts/test_chunked_api.sh` | raw socket 发送真实 chunked 请求 |
-| `scripts/test_ref_count_consistency.sh` | 校验 SHA-256 去重、`ref_count` 触发器和物理文件清理 |
-| `scripts/test_upload_race_consistency.sh` | 并发上传同内容文件的一致性专项 |
-| `scripts/test_upload_quota_race.sh` | 并发上传配额竞争专项 |
-| `scripts/test_upload_failure_cleanup.sh` | 上传失败路径故障注入和清理专项 |
-| `scripts/check_storage_consistency.sh --dry-run` | DB / 磁盘文件一致性巡检 |
-| `scripts/run_benchmark_suite.sh` | wrk benchmark、CSV、gate 和容器 stats |
-| `scripts/profile_perf_flamegraph.sh` | perf + FlameGraph 采样入口 |
+| `scripts/run_smoke_suite.sh` | 认证、私有 API、文件、Drive、ref-count、并发上传、分享、chunked API 冒烟 |
+| `scripts/test_auth_rate_limit.sh` | 登录/注册限流验证 |
+| `scripts/test_file_workflow.sh` | 文件主链路 |
+| `scripts/test_ref_count_consistency.sh` | 去重和引用计数专项 |
+| `scripts/test_upload_race_consistency.sh` | 并发上传同内容一致性 |
+| `scripts/test_upload_quota_race.sh` | 并发配额竞争 |
+| `scripts/test_upload_failure_cleanup.sh` | 上传失败故障注入 |
+| `scripts/test_share_race.sh` | 分享并发竞争 |
+| `scripts/check_storage_consistency.sh --dry-run` | DB/磁盘一致性巡检 |
+| `scripts/format_check.sh check` | clang-format 检查 |
+| `scripts/run_coverage.sh` | coverage smoke |
 
-CI 位于 `.github/workflows/ci.yml`，覆盖 CMake 构建、CTest、coverage smoke、格式检查、ASan/UBSan parser 测试、数据库迁移和 chunked API 集成测试。
+本地验证示例：
 
-前端构建、开发服务器和静态部署示例位于 `../Atlas-Frontend`。
-
-## 目录结构
-
-```text
-.
-|-- app/                         # main、配置、WebServer、Reactor 启动层
-|-- http/
-|   |-- core/                    # HttpConnection、parser、IO、response、runtime
-|   |-- router/                  # healthz/API 路由
-|   |-- controllers/             # Auth/File/Operation controller
-|   `-- files/                   # multipart parser、文件下载响应、文件辅助函数
-|-- service/                     # auth/files 业务服务
-|-- repo/mysql/                  # Repository / DAO
-|-- infra/                       # db、storage、threadpool、timer、log、lock
-|-- webroot/                     # uploads 存储目录
-|-- migrations/                  # 版本化 SQL 迁移
-|-- scripts/                     # 测试、迁移、benchmark、coverage、format 脚本
-|-- tests/                       # C++ 单元测试
-|-- docs/                        # 架构、API、迁移、性能和复现文档
-|-- docker/                      # Docker 辅助文件与 MySQL 初始化 SQL
-|-- deploy/                      # Nginx 等部署示例
-`-- .github/workflows/           # CI
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --target atlas-unit-tests --parallel
+ctest --test-dir build --output-on-failure
 ```
 
-更详细的目录说明见 [docs/project-structure.md](docs/project-structure.md)。
+容器验证：
 
-## Benchmark 与性能说明
+```bash
+docker compose exec -T backend ./scripts/run_smoke_suite.sh
+```
 
-仓库保留 benchmark 工具和历史报告，但 README 不直接宣传未经 gate 校验的 headline 数字。运行：
+## 性能与压测
+
+Benchmark 入口：
 
 ```bash
 scripts/run_benchmark_suite.sh
 ```
 
-输出包括：
+输出：
 
 - `*.wrk.txt`：wrk 原始输出
-- `*.stats.csv`：Web / MySQL 容器 CPU、内存采样
+- `*.stats.csv`：容器 CPU/内存采样
 - `benchmark.csv`：汇总指标
-- `benchmark-trusted.csv`：通过 invalid gate 的可信样本
+- `benchmark-trusted.csv`：通过 gate 的可信样本
 
-详细方法和解释见 [docs/benchmark.md](docs/benchmark.md)，火焰图流程见 [docs/perf-flamegraph.md](docs/perf-flamegraph.md)。
+README 不直接宣传单次压测 headline 数字。原因是项目运行环境、Docker 状态、MySQL/Redis 延迟和机器负载都会影响结果。更稳妥的方式是给出压测方法、原始数据、gate 和复现脚本。详细说明见 [docs/benchmark.md](docs/benchmark.md)。
 
-## 面试讲解要点
+## 生产化边界
 
-- 底层能力：`epoll`、非阻塞 IO、Reactor、线程池、HTTP parser、chunked/multipart、OpenSSL、MySQL C API。
-- 工程化能力：CMake、Docker、CI、Sanitizer、coverage、数据库迁移、benchmark gate。
-- 安全与可靠性：PBKDF2 密码、Bearer Token 会话、路径/文件名清洗、上传配额、回收站、软删除、操作审计。
-- 分层重构：`HttpConnection` 已收敛为连接和协议层；业务入口通过 `HttpRequest`、`RequestContext`、`HttpResponse` 进入 `AuthController`、`FileController`、`OperationController`；业务编排在 `service/`，SQL 在 `repo/mysql/`。
-- 一致性专项：`ref_count` 由 MySQL trigger 维护；上传、永久删除、quota 检查使用事务和行锁；配套并发、故障注入和 DB/磁盘巡检脚本。
-- 后续改进：继续补 controller/service 级单元测试；对 fd、`FILE*`、`MYSQL_RES*`、`SSL*` 做更多 RAII 封装；把 DB commit 后的磁盘清理演进为 outbox / cleanup job。
+这个项目适合作为 C++ WebServer + 网盘业务的工程项目，但不能包装成生产级网盘。需要主动承认的边界：
 
-## 面试入口
+- 当前文件存储是本地磁盘，不适合直接多实例部署。
+- MySQL 和本地磁盘不能做真正的原子提交，只能通过事务边界、顺序约束、故障清理和巡检补偿降低不一致风险。
+- Redis-Limiter 默认是单 Redis 接入，生产需要 Sentinel/Cluster、高可用和容量规划。
+- 当前没有完整对象存储、断点续传、分片上传、Range 下载、文件预览、协作权限、异步任务平台。
+- 本地 fallback 只能保证单实例限流，Redis 故障时不能继续保证多实例全局配额。
 
-| 入口 | 用途 |
+生产化演进方向：
+
+- 抽象 `Storage` 接口，支持 LocalStorage 和 S3/MinIO/OSS。
+- 文件上传改成对象存储直传或后端签名上传。
+- 物理删除改为 outbox / cleanup job，支持重试和告警。
+- 引入 Range 下载、秒传 API、分片上传会话、后台异步合并。
+- MySQL 主从/备份恢复演练、Redis Sentinel/Cluster、统一监控和日志追踪。
+- 认证限流规则下沉到配置中心或独立限流服务。
+
+## 简历与面试讲法
+
+### 30 秒介绍
+
+```text
+Atlas 是我用 C++17 做的 Linux 网盘后端。底层是 epoll、非阻塞 socket、主从 Reactor 和线程池，上层实现了 HTTP/1.1、chunked、multipart、MySQL 连接池、账号会话、文件上传下载、目录、回收站、公开分享和操作审计。文件部分采用逻辑文件和物理文件双表，通过 SHA-256 去重和 trigger 维护 ref_count，并用事务、唯一索引和行锁处理并发上传、删除和配额一致性。登录/注册限流接入了我独立实现的 Redis-Limiter 组件，Atlas 只保留业务适配层。
+```
+
+### 高频追问
+
+| 问题 | 回答要点 |
 | --- | --- |
-| [docs/interview-highlights.md](docs/interview-highlights.md) | 面试讲解主线、核心工程问题、设计取舍和追问回答 |
-| [docs/resume-and-pitch.md](docs/resume-and-pitch.md) | 简历 bullet、30 秒/1 分钟开场、STAR 故事 |
-| [docs/final-review.md](docs/final-review.md) | 最终复盘、验证入口、剩余边界和清洁清单 |
-| `scripts/run_smoke_suite.sh` | 默认 10 项回归，覆盖主链路和一致性基础场景 |
-| `scripts/test_upload_quota_race.sh` | quota 并发穿透专项复现 |
-| `scripts/test_upload_failure_cleanup.sh` | 上传失败故障注入专项复现 |
+| 为什么用 C++ 做后端 | 目标是展示 Linux 网络编程和底层工程能力，不只是业务 CRUD |
+| Reactor 怎么实现 | MainReactor 只 accept，SubReactor 管连接读写，线程池跑业务 |
+| ET 怎么读 | 非阻塞循环读到 `EAGAIN/EWOULDBLOCK`，否则边沿触发会漏数据 |
+| 为什么逻辑文件和物理文件拆表 | 支持用户视角文件和磁盘真实对象解耦，便于 SHA-256 去重和引用计数 |
+| ref_count 怎么保证 | trigger 在 `files` insert/delete 后维护，事务内结合行锁和唯一索引 |
+| DB 成功但磁盘失败怎么办 | 无法原子提交，采用先逻辑状态正确，再通过补偿清理孤儿文件 |
+| 限流组件怎么解耦 | Redis-Limiter 提供通用 C++ core，Atlas 只处理登录/注册 key 和 HTTP 响应 |
+| 能不能多实例部署 | 当前本地磁盘不能直接多实例，生产要切对象存储并让服务无状态化 |
+
+更多材料：
+
+- [docs/interview-highlights.md](docs/interview-highlights.md)
+- [docs/resume-and-pitch.md](docs/resume-and-pitch.md)
+- [docs/final-review.md](docs/final-review.md)
 
 ## 文档索引
 

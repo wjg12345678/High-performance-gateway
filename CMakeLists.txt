@@ -4,6 +4,19 @@ project(AtlasWebServer VERSION 1.0.0 LANGUAGES CXX)
 
 option(ATLAS_ENABLE_SANITIZERS "Build targets with AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
 option(ATLAS_ENABLE_COVERAGE "Build parser tests with gcov coverage instrumentation" OFF)
+set(ATLAS_REDIS_LIMITER_ROOT "" CACHE PATH "Path to the external Redis-Limiter project")
+
+if(NOT ATLAS_REDIS_LIMITER_ROOT)
+    if(DEFINED ENV{ATLAS_REDIS_LIMITER_ROOT})
+        set(ATLAS_REDIS_LIMITER_ROOT "$ENV{ATLAS_REDIS_LIMITER_ROOT}")
+    elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../Redis-Limiter/CMakeLists.txt")
+        set(ATLAS_REDIS_LIMITER_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../Redis-Limiter")
+    elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../../Redis-Limiter/CMakeLists.txt")
+        set(ATLAS_REDIS_LIMITER_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../Redis-Limiter")
+    elseif(EXISTS "/home/ubuntu/Redis-Limiter/CMakeLists.txt")
+        set(ATLAS_REDIS_LIMITER_ROOT "/home/ubuntu/Redis-Limiter")
+    endif()
+endif()
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -38,18 +51,16 @@ find_path(HIREDIS_INCLUDE_DIR hiredis/hiredis.h)
 find_library(HIREDIS_LIBRARY hiredis)
 
 if(HIREDIS_INCLUDE_DIR AND HIREDIS_LIBRARY)
-    set(ATLAS_WITH_REDIS_LIMITER 1)
-    list(APPEND ATLAS_RATE_LIMITER_SOURCES
-        third_party/redis_limiter/src/redis_pool.cpp
-        third_party/redis_limiter/src/sliding_window_limiter.cpp
-    )
-    list(APPEND ATLAS_RATE_LIMITER_INCLUDE_DIRS
-        third_party/redis_limiter/include
-        ${HIREDIS_INCLUDE_DIR}
-    )
-    list(APPEND ATLAS_RATE_LIMITER_LIBRARIES
-        ${HIREDIS_LIBRARY}
-    )
+    if(EXISTS "${ATLAS_REDIS_LIMITER_ROOT}/CMakeLists.txt")
+        set(REDIS_LIMITER_BUILD_PYTHON OFF CACHE BOOL "Build the redis_limiter Python extension" FORCE)
+        add_subdirectory("${ATLAS_REDIS_LIMITER_ROOT}" "${CMAKE_BINARY_DIR}/redis_limiter")
+        set(ATLAS_WITH_REDIS_LIMITER 1)
+        list(APPEND ATLAS_RATE_LIMITER_LIBRARIES
+            redis_limiter::core
+        )
+    else()
+        message(WARNING "external Redis-Limiter project not found at ${ATLAS_REDIS_LIMITER_ROOT}; auth rate limiter will use local fallback only")
+    endif()
 else()
     message(WARNING "hiredis not found; auth rate limiter will use local fallback only")
 endif()
