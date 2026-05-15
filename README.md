@@ -589,6 +589,9 @@ Atlas 是我用 C++17 做的 Linux 网盘后端。底层是 epoll、非阻塞 so
 | [docs/interview-highlights.md](docs/interview-highlights.md) | 面试展示材料 |
 | [docs/resume-and-pitch.md](docs/resume-and-pitch.md) | 简历与面试话术 |
 | [docs/final-review.md](docs/final-review.md) | 项目最终复盘 |
+| [docs/production-hardening-roadmap.md](docs/production-hardening-roadmap.md) | 生产化加固与升级路线 |
+| [docs/ops-debug-runbook.md](docs/ops-debug-runbook.md) | 运维排障与事故处理手册 |
+| [docs/interview-defense-playbook.md](docs/interview-defense-playbook.md) | 面试答辩攻防手册 |
 
 ## License
 
