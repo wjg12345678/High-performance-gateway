@@ -565,6 +565,8 @@ Atlas 是我用 C++17 做的 Linux 网盘后端。底层是 epoll、非阻塞 so
 
 更多材料：
 
+- [docs/project-study-guide-complete.md](docs/project-study-guide-complete.md)
+- [docs/interview-qna-complete.md](docs/interview-qna-complete.md)
 - [docs/interview-highlights.md](docs/interview-highlights.md)
 - [docs/resume-and-pitch.md](docs/resume-and-pitch.md)
 - [docs/final-review.md](docs/final-review.md)
@@ -582,6 +584,8 @@ Atlas 是我用 C++17 做的 Linux 网盘后端。底层是 epoll、非阻塞 so
 | [docs/project-structure.md](docs/project-structure.md) | 目录结构 |
 | [docs/benchmark.md](docs/benchmark.md) | benchmark 方法 |
 | [docs/perf-flamegraph.md](docs/perf-flamegraph.md) | perf flamegraph |
+| [docs/project-study-guide-complete.md](docs/project-study-guide-complete.md) | 完整学习路线 |
+| [docs/interview-qna-complete.md](docs/interview-qna-complete.md) | 面试完整问答 |
 | [docs/interview-highlights.md](docs/interview-highlights.md) | 面试展示材料 |
 | [docs/resume-and-pitch.md](docs/resume-and-pitch.md) | 简历与面试话术 |
 | [docs/final-review.md](docs/final-review.md) | 项目最终复盘 |
