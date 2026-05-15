@@ -152,14 +152,80 @@ SAMPLE_FREQ=199 \
 
 这类问题通常需要“接口级 tracing + perf”联合判断，单靠火焰图只能看到 CPU 时间，无法完整解释等待来源。
 
-## 示例火焰图
+## 本次真实采样
 
-运行采样脚本后，结果默认生成到 `reports/perf/<timestamp>/`。仓库不再保留历史采样产物，避免把大体积 perf 数据和图片提交进源码树。
+本次提交保留一张真实采样生成的 SVG，用来固定当前基线。原始 `perf.data` 和中间结果仍放在 `reports/perf/<timestamp>/`，该目录只作为本地临时产物，不提交到仓库。
 
-- 交互式 SVG：`reports/perf/<timestamp>/flamegraph.svg`
-- 原始采样数据：`reports/perf/<timestamp>/perf.data`
+复现命令：
 
-GitHub 对带脚本的交互式 SVG 预览支持有限；如果要缩放、搜索和点击查看完整栈细节，请直接打开生成目录中的 `flamegraph.svg`。
+```bash
+DURATION=20s \
+CONNECTIONS=200 \
+THREADS=4 \
+SAMPLE_FREQ=99 \
+./scripts/profile_perf_flamegraph.sh
+```
+
+采样条件：
+
+| 项目 | 值 |
+| --- | --- |
+| 采样时间 | 2026-05-15 |
+| 压测接口 | `GET /healthz` |
+| 目标地址 | `http://127.0.0.1:9006/healthz` |
+| 并发连接 | `200` |
+| wrk 线程 | `4` |
+| 压测时长 | `20s` |
+| perf 采样频率 | `99Hz` |
+| perf 栈模式 | `dwarf` |
+| perf 样本数 | `2788` |
+| perf 数据大小 | `22.741 MB` |
+
+压测结果：
+
+| 指标 | 结果 |
+| --- | ---: |
+| 总请求数 | `426714` |
+| 吞吐 | `21291.73 req/s` |
+| 平均延迟 | `24.02 ms` |
+| P50 | `8.59 ms` |
+| P75 | `12.19 ms` |
+| P90 | `16.35 ms` |
+| P99 | `711.07 ms` |
+| 最大延迟 | `1.48 s` |
+| wrk timeout | `53` |
+| 传输速率 | `3.82 MB/s` |
+
+### 火焰图
+
+下图是本次真实运行生成并提交的 SVG。GitHub 对带脚本的交互式 SVG 预览支持有限；如果要缩放、搜索和点击查看完整栈细节，建议在浏览器中直接打开 `docs/perf-flamegraph.svg`。
+
+![Atlas WebServer healthz perf flamegraph](./perf-flamegraph.svg)
+
+### 热点解读
+
+| 热点路径 | 折叠栈占比 | 解读 |
+| --- | ---: | --- |
+| `SubReactor::run -> dealwithwrite -> HttpConnection::write -> HttpConnection::init` | `12.95%` | 写响应后连接状态重置是本次最宽的单条路径，`/healthz` 的业务逻辑很轻，因此连接生命周期成本会被放大。 |
+| `threadpool<HttpConnection>::run -> pthread_cond_wait -> futex_wait -> finish_task_switch` | `3.59%` / `2.98%` | 工作线程存在明显条件变量等待和调度切换，说明同步与唤醒成本在轻接口压测中占比不低。 |
+| `Log::worker_loop -> pthread_cond_wait -> futex_wait` | `3.23%` | 日志线程等待在图上可见，配合读路径中的 `Log::write_log` 唤醒，说明日志队列也参与了热路径同步。 |
+| `dealwithread -> threadpool::enqueue -> pthread_mutex_lock` | `2.19%` | 读事件进入线程池时有锁竞争或等待，轻请求下线程池投递成本值得关注。 |
+| `dealwithread -> Log::write_log -> pthread_cond_signal` | `2.12%` | 每次请求触发日志唤醒会增加 futex wake 和调度开销。 |
+| `HttpConnection::write -> ring_send -> send -> tcp_*` | `1.04%` 单条栈，按 children 展开约 `17%` | 响应发送和内核 TCP 栈是主要有效工作之一，属于高并发短响应场景中的合理热点。 |
+
+### 结论
+
+这次 `/healthz` 压测的吞吐达到 `21291.73 req/s`，P50/P90 分别为 `8.59 ms` 和 `16.35 ms`，中位数和常规分位表现正常。但 P99 达到 `711.07 ms`，并出现 `53` 个 wrk timeout，说明在 `200` 并发连接下已经有明显尾延迟。
+
+火焰图没有显示 JSON、SQL、文件 I/O 这类业务热点；主要宽栈集中在响应发送、连接重置、线程池投递、日志唤醒、`futex` 和调度切换。对于 `/healthz` 这种轻接口，当前更值得优先看的不是单个计算函数，而是事件循环到线程池、日志队列以及连接生命周期上的同步成本。
+
+优先改进方向：
+
+- 对 `/healthz` 这类轻量接口评估是否可以减少线程池投递，避免一次短请求经过完整工作线程调度。
+- 降低热路径日志成本，例如减少健康检查日志、批量唤醒日志线程或按级别关闭高频访问日志。
+- 检查 `HttpConnection::write` 后调用 `HttpConnection::init` 的必要工作量，确认是否存在可延后或可复用的状态重置。
+- 观察 `epoll_ctl` 与 `modfd` 调用频率，短连接或高并发短响应下这部分可能进一步影响尾延迟。
+- 后续应对登录、私有文件列表、文件下载分别采样；本次结论只代表 `GET /healthz` 的高并发轻接口路径。
 
 ## 常见问题
 

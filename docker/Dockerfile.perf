@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     curl \
     default-libmysqlclient-dev \
+    default-mysql-client \
     git \
     libssl-dev \
     linux-tools-common \
