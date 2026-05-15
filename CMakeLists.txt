@@ -84,7 +84,7 @@ set(ATLAS_SERVER_SOURCES
     http/files/file_helpers.cpp
     http/files/file_store.cpp
     http/files/multipart_parser.cpp
-    http/files/file_service.cpp
+    http/files/file_response.cpp
     http/core/utils.cpp
     http/core/response.cpp
     http/core/io.cpp
