@@ -575,6 +575,7 @@ Atlas 是我用 C++17 做的 Linux 网盘后端。底层是 epoll、非阻塞 so
 
 | 文档 | 内容 |
 | --- | --- |
+| [docs/README.md](docs/README.md) | 文档导航和阅读顺序 |
 | [docs/quickstart-5min.md](docs/quickstart-5min.md) | 5 分钟主链路复现 |
 | [docs/api.md](docs/api.md) | API 字段和响应示例 |
 | [docs/architecture.md](docs/architecture.md) | 架构设计 |
