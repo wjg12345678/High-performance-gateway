@@ -7,9 +7,14 @@ BASE_URL="${BASE_URL:-http://127.0.0.1:9006}"
 THREADS="${THREADS:-4}"
 DURATION="${DURATION:-15s}"
 CONCURRENCY_SET="${CONCURRENCY_SET:-50 100 200}"
-USER_NAME="${USER_NAME:-upload_fix_manual}"
+RUN_ID="$(date +%Y%m%d_%H%M%S)"
+USER_NAME="${USER_NAME:-atlas_bench_$RUN_ID}"
 PASSWORD="${PASSWORD:-123456}"
-REPORT_DIR="${REPORT_DIR:-$ROOT_DIR/reports/benchmarks/$(date +%Y%m%d_%H%M%S)}"
+LOGIN_USER_NAME="${LOGIN_USER_NAME:-${USER_NAME}_login}"
+LOGIN_PASSWORD="${LOGIN_PASSWORD:-$PASSWORD}"
+WRK_TIMEOUT="${WRK_TIMEOUT:-60s}"
+AUTH_SETTLE_SECONDS="${AUTH_SETTLE_SECONDS:-30}"
+REPORT_DIR="${REPORT_DIR:-$ROOT_DIR/reports/benchmarks/$RUN_ID}"
 COMPOSE_CMD="${COMPOSE_CMD:-docker compose}"
 suite_failed=0
 
@@ -62,33 +67,74 @@ has_sigsegv_since() {
     fi
 }
 
+try_obtain_token() {
+    token_user_name="$1"
+    token_password="$2"
+    login_json="$(curl -sS -X POST "$BASE_URL/api/login" \
+      -H "Content-Type: application/json" \
+      -d "{\"username\":\"$token_user_name\",\"passwd\":\"$token_password\"}")"
+    obtained_token="$(printf '%s\n' "$login_json" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')"
+
+    [ -n "$obtained_token" ]
+}
+
+refresh_token() {
+    if try_obtain_token "$USER_NAME" "$PASSWORD"; then
+        TOKEN="$obtained_token"
+        return
+    fi
+
+    echo "failed to obtain token: $login_json" >&2
+    exit 1
+}
+
+ensure_user() {
+    ensure_user_name="$1"
+    ensure_password="$2"
+    register_json="$(curl -sS -X POST "$BASE_URL/api/register" \
+      -H "Content-Type: application/json" \
+      -d "{\"username\":\"$ensure_user_name\",\"passwd\":\"$ensure_password\"}")"
+
+    if printf '%s\n' "$register_json" | grep -Eq '"code":(0|409)'; then
+        return
+    fi
+
+    if try_obtain_token "$ensure_user_name" "$ensure_password"; then
+        return
+    fi
+
+    echo "failed to ensure benchmark user: $register_json" >&2
+    if [ -z "$TOKEN" ]; then
+        echo "login response: $login_json" >&2
+    fi
+    exit 1
+}
+
 WEB_CONTAINER_ID="$(resolve_container_id web)"
 MYSQL_CONTAINER_ID="$(resolve_container_id mysql)"
 WEB_CONTAINER_NAME="$(resolve_container_name "$WEB_CONTAINER_ID")"
 MYSQL_CONTAINER_NAME="$(resolve_container_name "$MYSQL_CONTAINER_ID")"
 
-login_json="$(curl -sS -X POST "$BASE_URL/api/login" \
-  -H "Content-Type: application/json" \
-  -d "{\"username\":\"$USER_NAME\",\"passwd\":\"$PASSWORD\"}")"
-TOKEN="$(printf '%s\n' "$login_json" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')"
-
-if [ -z "$TOKEN" ]; then
-    echo "failed to obtain token: $login_json" >&2
-    exit 1
-fi
+TOKEN=""
+ensure_user "$USER_NAME" "$PASSWORD"
+ensure_user "$LOGIN_USER_NAME" "$LOGIN_PASSWORD"
+refresh_token
 
 echo "report_dir=$REPORT_DIR"
 echo "base_url=$BASE_URL"
 echo "threads=$THREADS"
 echo "duration=$DURATION"
 echo "concurrency_set=$CONCURRENCY_SET"
+echo "wrk_timeout=$WRK_TIMEOUT"
+echo "auth_settle_seconds=$AUTH_SETTLE_SECONDS"
 echo "user_name=$USER_NAME"
+echo "login_user_name=$LOGIN_USER_NAME"
 echo "web_container_id=$WEB_CONTAINER_ID"
 echo "mysql_container_id=$MYSQL_CONTAINER_ID"
 echo "web_container_name=$WEB_CONTAINER_NAME"
 echo "mysql_container_name=$MYSQL_CONTAINER_NAME"
 
-printf '%s\n' "endpoint,method,concurrency,duration,threads,request_size_bytes,db_hit,https,requests_per_sec,latency_avg_ms,latency_p50_ms,latency_p90_ms,latency_p95_ms,latency_p99_ms,transfer_per_sec_mb,errors,socket_error_total,web_restart_delta,mysql_restart_delta,sigsegv_detected,valid,invalid_reason,web_cpu_peak,web_mem_peak,mysql_cpu_peak,mysql_mem_peak" > "$REPORT_DIR/results.csv"
+printf '%s\n' "endpoint,method,concurrency,duration,threads,request_size_bytes,db_hit,https,requests_per_sec,latency_avg_ms,latency_p50_ms,latency_p90_ms,latency_p95_ms,latency_p99_ms,transfer_per_sec_mb,non_2xx_3xx,errors,socket_error_total,web_restart_delta,mysql_restart_delta,sigsegv_detected,valid,invalid_reason,web_cpu_peak,web_mem_peak,mysql_cpu_peak,mysql_mem_peak" > "$REPORT_DIR/results.csv"
 
 run_case() {
     name="$1"
@@ -98,6 +144,7 @@ run_case() {
     script_path="$5"
     request_size="$6"
     db_hit="$7"
+    requires_token="$8"
 
     wrk_out="$REPORT_DIR/${name}_c${concurrency}.wrk.txt"
     stats_out="$REPORT_DIR/${name}_c${concurrency}.stats.csv"
@@ -107,6 +154,10 @@ run_case() {
     case_started_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
     web_restart_before="$(restart_count "$WEB_CONTAINER_ID")"
     mysql_restart_before="$(restart_count "$MYSQL_CONTAINER_ID")"
+
+    if [ "$requires_token" = "1" ]; then
+        refresh_token
+    fi
 
     : > "$stats_out"
     (
@@ -120,9 +171,11 @@ run_case() {
 
     wrk_status=0
     if [ -n "$script_path" ]; then
-        TOKEN="$TOKEN" wrk -t"$THREADS" -c"$concurrency" -d"$DURATION" --latency -s "$script_path" "$url" > "$wrk_out" || wrk_status=$?
+        USER_NAME="$USER_NAME" PASSWORD="$PASSWORD" TOKEN="$TOKEN" \
+          LOGIN_USER_NAME="$LOGIN_USER_NAME" LOGIN_PASSWORD="$LOGIN_PASSWORD" \
+          wrk -t"$THREADS" -c"$concurrency" -d"$DURATION" --timeout "$WRK_TIMEOUT" --latency -s "$script_path" "$url" > "$wrk_out" || wrk_status=$?
     else
-        wrk -t"$THREADS" -c"$concurrency" -d"$DURATION" --latency "$url" > "$wrk_out" || wrk_status=$?
+        wrk -t"$THREADS" -c"$concurrency" -d"$DURATION" --timeout "$WRK_TIMEOUT" --latency "$url" > "$wrk_out" || wrk_status=$?
     fi
 
     kill "$stats_pid" >/dev/null 2>&1 || true
@@ -135,12 +188,16 @@ run_case() {
     requests_per_sec="$(awk '/Requests\/sec:/ {print $2}' "$wrk_out")"
     transfer_per_sec="$(awk '/Transfer\/sec:/ {print $2 " " $3}' "$wrk_out")"
     latency_avg="$(awk '/Latency/ && $1=="Latency" {print $2 " " $3; exit}' "$wrk_out")"
-    p50="$(awk '/50%/ {print $2 " " $3}' "$wrk_out")"
-    p90="$(awk '/90%/ {print $2 " " $3}' "$wrk_out")"
-    p99="$(awk '/99%/ {print $2 " " $3}' "$wrk_out")"
+    p50="$(awk '$1=="50%" {print $2 " " $3; exit}' "$wrk_out")"
+    p90="$(awk '$1=="90%" {print $2 " " $3; exit}' "$wrk_out")"
+    p99="$(awk '$1=="99%" {print $2 " " $3; exit}' "$wrk_out")"
     errors="$(awk -F': ' '/Socket errors:/ {print $2}' "$wrk_out")"
     if [ -z "${errors:-}" ]; then
         errors="none"
+    fi
+    non_success="$(awk -F': ' '/Non-2xx or 3xx responses:/ {print $2}' "$wrk_out")"
+    if [ -z "${non_success:-}" ]; then
+        non_success="0"
     fi
     socket_errors_total="$(socket_error_total "$errors")"
     web_restart_after="$(restart_count "$WEB_CONTAINER_ID")"
@@ -154,9 +211,12 @@ run_case() {
     invalid_reason="none"
     captured_web_logs="0"
     captured_mysql_logs="0"
-    if [ "$socket_errors_total" -ne 0 ] || [ "$web_restart_delta" -ne 0 ] || [ "$mysql_restart_delta" -ne 0 ] || [ "$sigsegv_detected" -ne 0 ]; then
+    if [ "$non_success" -ne 0 ] || [ "$socket_errors_total" -ne 0 ] || [ "$web_restart_delta" -ne 0 ] || [ "$mysql_restart_delta" -ne 0 ] || [ "$sigsegv_detected" -ne 0 ]; then
         valid="0"
         invalid_reason=""
+        if [ "$non_success" -ne 0 ]; then
+            invalid_reason="${invalid_reason}non_2xx_3xx=$non_success;"
+        fi
         if [ "$socket_errors_total" -ne 0 ]; then
             invalid_reason="${invalid_reason}socket_errors=$socket_errors_total;"
         fi
@@ -188,6 +248,7 @@ web_container_name=$WEB_CONTAINER_NAME
 mysql_container_id=$MYSQL_CONTAINER_ID
 mysql_container_name=$MYSQL_CONTAINER_NAME
 errors=$errors
+non_2xx_3xx=$non_success
 socket_error_total=$socket_errors_total
 web_restart_before=$web_restart_before
 web_restart_after=$web_restart_after
@@ -226,19 +287,22 @@ EOF
         {v=$1; u=$2; if (u=="KB") v/=1024; else if (u=="GB") v*=1024; print v}
     ')"
 
-    printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"%s",%s,%s,%s,%s,%s,"%s",%s,%s,%s,%s\n' \
+    printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"%s",%s,%s,%s,%s,%s,"%s",%s,%s,%s,%s\n' \
       "$name" "$method" "$concurrency" "$DURATION" "$THREADS" "$request_size" "$db_hit" "0" \
-      "$requests_per_sec" "$latency_avg_ms" "$p50_ms" "$p90_ms" "$p95_ms" "$p99_ms" "$transfer_mb" "$errors" \
+      "$requests_per_sec" "$latency_avg_ms" "$p50_ms" "$p90_ms" "$p95_ms" "$p99_ms" "$transfer_mb" "$non_success" "$errors" \
       "$socket_errors_total" "$web_restart_delta" "$mysql_restart_delta" "$sigsegv_detected" "$valid" "$invalid_reason" \
       "$web_cpu_peak" "$web_mem_peak" "$mysql_cpu_peak" "$mysql_mem_peak" >> "$REPORT_DIR/results.csv"
 }
 
 for c in $CONCURRENCY_SET; do
-    run_case "healthz" "GET" "$BASE_URL/healthz" "$c" "$ROOT_DIR/test_pressure/healthz.lua" "0" "0"
-    run_case "login" "POST" "$BASE_URL/api/login" "$c" "$ROOT_DIR/test_pressure/login.lua" "48" "1"
-    run_case "private_ping" "GET" "$BASE_URL/api/private/ping" "$c" "$ROOT_DIR/test_pressure/private_ping.lua" "0" "1"
-    run_case "drive_items" "GET" "$BASE_URL/api/drive/items?folder_id=0" "$c" "$ROOT_DIR/test_pressure/drive_items.lua" "0" "1"
-    run_case "drive_upload" "POST" "$BASE_URL/api/drive/files/upload" "$c" "$ROOT_DIR/test_pressure/drive_upload.lua" "336" "1"
+    run_case "healthz" "GET" "$BASE_URL/healthz" "$c" "$ROOT_DIR/test_pressure/healthz.lua" "0" "0" "0"
+    run_case "login" "POST" "$BASE_URL/api/login" "$c" "$ROOT_DIR/test_pressure/login.lua" "48" "1" "0"
+    if [ "$AUTH_SETTLE_SECONDS" != "0" ]; then
+        sleep "$AUTH_SETTLE_SECONDS"
+    fi
+    run_case "private_ping" "GET" "$BASE_URL/api/private/ping" "$c" "$ROOT_DIR/test_pressure/private_ping.lua" "0" "1" "1"
+    run_case "drive_items" "GET" "$BASE_URL/api/drive/items?folder_id=0" "$c" "$ROOT_DIR/test_pressure/drive_items.lua" "0" "1" "1"
+    run_case "drive_upload" "POST" "$BASE_URL/api/drive/files/upload" "$c" "$ROOT_DIR/test_pressure/drive_upload.lua" "336" "1" "1"
 done
 
 echo "done: $REPORT_DIR/results.csv"

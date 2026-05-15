@@ -314,7 +314,7 @@ cmake -S . -B build \
   -DATLAS_REDIS_LIMITER_ROOT=/path/to/Redis-Limiter
 ```
 
-如果没有安装 hiredis 或找不到 Redis-Limiter，Atlas 会退回本地限流 fallback，保证后端仍能构建运行。
+如果没有安装 hiredis 或找不到 Redis-Limiter，Atlas 仍会构建运行，但认证限流会被禁用；限流算法和故障降级逻辑只由 Redis-Limiter 组件提供。
 
 ## API 概览
 
@@ -360,21 +360,14 @@ curl -i http://127.0.0.1:${ATLAS_FRONTEND_PORT:-8080}/healthz
 | `frontend` | Nginx 托管 Vue/Vite 构建产物，并反代 `/api/` 到后端 |
 | `backend` | C++ Atlas WebServer |
 | `mysql` | MySQL 8 数据库 |
-| `redis` | Redis 限流后端 |
+| `redis` | 可选 Redis 限流后端 |
 | `mysql-backup` | 定时 MySQL dump 备份 |
 
-后端 Docker build 通过 `additional_contexts` 引入外部 Redis-Limiter。默认路径是 Atlas 根目录的兄弟目录：
-
-```text
-/home/ubuntu/
-|-- Atlas/
-`-- Redis-Limiter/
-```
-
-如果你的组件路径不同：
+默认 Docker build 不引入外部 Redis-Limiter，Atlas 镜像可以独立构建运行；这种模式下认证限流会被禁用。需要启用认证限流时，在本地构建或自定义镜像中提供 Redis-Limiter 源码，并通过 CMake 指定组件路径：
 
 ```bash
-REDIS_LIMITER_SRC=/path/to/Redis-Limiter docker compose up -d --build
+cmake -S . -B build \
+  -DATLAS_REDIS_LIMITER_ROOT=/path/to/Redis-Limiter
 ```
 
 ### 后端独立部署
@@ -382,13 +375,7 @@ REDIS_LIMITER_SRC=/path/to/Redis-Limiter docker compose up -d --build
 在本仓库目录下启动后端、MySQL、Redis：
 
 ```bash
-REDIS_LIMITER_SRC=../../Redis-Limiter docker compose up -d --build
-```
-
-如果你的 `Redis-Limiter` 与 `Atlas-WebServer` 是兄弟目录：
-
-```bash
-REDIS_LIMITER_SRC=../Redis-Limiter docker compose up -d --build
+docker compose up -d --build
 ```
 
 ### 本地构建
@@ -480,7 +467,7 @@ curl -i -sS "$BASE_URL/api/drive/files/$FILE_ID/download" \
 | `TWS_THREADPOOL_QUEUE_MODE` | `mutex` | 线程池队列，支持 `mutex` / `lockfree` |
 | `TWS_UPLOAD_MAX_BYTES` | `104857600` | 单文件上传上限 |
 | `TWS_USER_STORAGE_QUOTA_BYTES` | `1073741824` | 单用户容量上限，`0` 不限制 |
-| `TWS_CONN_TIMEOUT` | `15` | HTTP 连接空闲超时 |
+| `TWS_CONN_TIMEOUT` | `60` | HTTP 连接空闲超时 |
 | `TWS_AUTH_RATE_LIMIT_ENABLED` | `1` | 是否启用认证限流 |
 | `TWS_REDIS_HOST` | `redis` in compose | Redis host |
 | `TWS_REDIS_PORT` | `6379` | Redis port |

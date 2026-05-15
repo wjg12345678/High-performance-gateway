@@ -178,6 +178,7 @@ void HttpConnection::close_conn_locked(bool real_close)
         removefd(m_epollfd, m_sockfd);
         m_sockfd = -1;
         m_user_count--;
+        release_connection_memory();
     }
 }
 
@@ -341,6 +342,48 @@ void HttpConnection::cleanup_temp_upload_state()
     m_upload_tmp_content_type.clear();
     m_upload_tmp_sha256.clear();
     m_upload_tmp_size = 0;
+}
+
+void HttpConnection::release_connection_memory()
+{
+    vector<char>().swap(m_read_ring_buf);
+    vector<char>().swap(m_read_buf);
+    vector<char>().swap(m_write_ring_buf);
+    vector<char>().swap(m_write_buf);
+    vector<char>().swap(m_file_send_buf);
+    reset_ring_buffer(m_read_ring, nullptr, 0);
+    reset_ring_buffer(m_write_ring, nullptr, 0);
+
+    string().swap(m_request_body);
+    string().swap(m_url_storage);
+    string().swap(m_query_string_storage);
+    string().swap(m_response_body_storage);
+    string().swap(m_extra_headers);
+    string().swap(m_authorization);
+    string().swap(m_current_user);
+    string().swap(m_body_parse_error_title);
+    string().swap(m_body_parse_error_message);
+    string().swap(m_stream_body_tmp_path);
+    string().swap(m_upload_tmp_path);
+    string().swap(m_upload_tmp_filename);
+    string().swap(m_upload_tmp_content_type);
+    string().swap(m_upload_tmp_sha256);
+    m_headers.clear();
+    m_form_data.clear();
+    m_json_data.clear();
+
+    m_url = nullptr;
+    m_query_string = nullptr;
+    m_version = nullptr;
+    m_host = nullptr;
+    m_response_body = nullptr;
+    m_response_body_len = 0;
+    m_read_idx = 0;
+    m_checked_idx = 0;
+    m_body_start_idx = 0;
+    m_write_idx = 0;
+    bytes_to_send = 0;
+    bytes_have_send = 0;
 }
 
 

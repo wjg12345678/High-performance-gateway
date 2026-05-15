@@ -22,9 +22,8 @@ RUN sed -i "s|http://archive.ubuntu.com/ubuntu|${APT_MIRROR}|g; s|http://securit
 WORKDIR /app
 
 COPY . /app
-COPY --from=redis_limiter_src . /opt/Redis-Limiter
 
-RUN cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DATLAS_REDIS_LIMITER_ROOT=/opt/Redis-Limiter \
+RUN cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
     && cmake --build build --target server --parallel
 
 EXPOSE 9006

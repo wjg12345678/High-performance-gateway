@@ -36,8 +36,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      additional_contexts:
-        redis_limiter_src: ${REDIS_LIMITER_SRC:-../../Redis-Limiter}
     restart: unless-stopped
     depends_on:
       mysql:
@@ -73,7 +71,7 @@ services:
       TWS_THREADPOOL_QUEUE_MODE: ${TWS_THREADPOOL_QUEUE_MODE:-mutex}
       TWS_SQL_NUM: ${TWS_SQL_NUM:-8}
       TWS_UPLOAD_MAX_BYTES: ${TWS_UPLOAD_MAX_BYTES:-104857600}
-      TWS_CONN_TIMEOUT: ${TWS_CONN_TIMEOUT:-15}
+      TWS_CONN_TIMEOUT: ${TWS_CONN_TIMEOUT:-60}
     volumes:
       - ./webroot/uploads:/app/webroot/uploads
     ports:

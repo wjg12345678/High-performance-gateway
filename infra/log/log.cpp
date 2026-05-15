@@ -1,12 +1,14 @@
+#include "log.h"
+
 #include <string.h>
-#include <time.h>
 #include <sys/time.h>
-#include <stdarg.h>
 #include <unistd.h>
+
+#include <algorithm>
+#include <stdexcept>
 #include <utility>
 #include <vector>
-#include "log.h"
-#include <pthread.h>
+
 using namespace std;
 
 namespace
@@ -29,112 +31,112 @@ string build_dated_log_name(const tm &time_info, const string &prefix, const str
 }
 
 Log::Log()
+    : dir_name(),
+      log_name(),
+      m_split_lines(0),
+      m_log_buf_size(0),
+      m_count(0),
+      m_today(0),
+      m_fp(nullptr),
+      m_log_queue(),
+      m_max_queue_size(0),
+      m_pending_logs(0),
+      m_stop_requested(false),
+      m_is_async(false),
+      m_write_thread(),
+      m_close_log(0),
+      m_log_level(INFO),
+      m_today_year(0),
+      m_today_mon(0),
+      m_file_index(0)
 {
-    m_count = 0;
-    m_split_lines = 0;
-    m_log_buf_size = 0;
-    m_is_async = false;
-    m_log_queue = NULL;
-    m_pending_logs.store(0);
-    m_fp = NULL;
-    m_thread_started = false;
-    m_write_thread = 0;
-    m_close_log = 0;
-    m_log_level = INFO;
-    m_today_year = 0;
-    m_today_mon = 0;
-    m_today = 0;
-    m_file_index = 0;
-    memset(dir_name, '\0', sizeof(dir_name));
-    memset(log_name, '\0', sizeof(log_name));
 }
 
 Log::~Log()
 {
     shutdown_async();
-    if (m_log_queue != NULL)
-    {
-        delete m_log_queue;
-        m_log_queue = NULL;
-    }
-    if (m_fp != NULL)
-    {
-        fflush(m_fp);
-        fclose(m_fp);
-        m_fp = NULL;
-    }
+    lock_guard<mutex> lock(m_file_mutex);
+    m_fp.reset();
 }
-//异步需要设置阻塞队列的长度，同步不需要设置
+
+void Log::reset_queue_locked()
+{
+    m_log_queue.clear();
+    m_pending_logs = 0;
+    m_stop_requested = false;
+}
+
+//异步需要设置队列长度，同步不需要设置
 bool Log::init(const char *file_name, int close_log, int log_buf_size, int split_lines, int max_queue_size, int log_level)
 {
+    shutdown_async();
+
     m_close_log = close_log;
     m_log_level = log_level;
     m_log_buf_size = log_buf_size;
     m_split_lines = split_lines;
-    m_pending_logs.store(0);
+
     if (file_name == NULL)
     {
         return false;
-    }
-
-    //如果设置了max_queue_size,则设置为异步
-    if (max_queue_size >= 1)
-    {
-        m_is_async = true;
-        m_log_queue = new block_queue<QueuedLog>(max_queue_size);
-        //flush_log_thread为回调函数,这里表示创建线程异步写日志
-        if (pthread_create(&m_write_thread, NULL, flush_log_thread, NULL) != 0)
-        {
-            delete m_log_queue;
-            m_log_queue = NULL;
-            m_is_async = false;
-            return false;
-        }
-        m_thread_started = true;
     }
 
     time_t t = time(NULL);
     struct tm my_tm;
     localtime_r(&t, &my_tm);
 
- 
     const char *p = strrchr(file_name, '/');
-
     if (p == NULL)
     {
-        strncpy(log_name, file_name, sizeof(log_name) - 1);
-        log_name[sizeof(log_name) - 1] = '\0';
-        dir_name[0] = '\0';
+        log_name = file_name;
+        dir_name.clear();
     }
     else
     {
-        strncpy(log_name, p + 1, sizeof(log_name) - 1);
-        log_name[sizeof(log_name) - 1] = '\0';
-        size_t dir_len = static_cast<size_t>(p - file_name + 1);
-        if (dir_len >= sizeof(dir_name))
-        {
-            dir_len = sizeof(dir_name) - 1;
-        }
-        memcpy(dir_name, file_name, dir_len);
-        dir_name[dir_len] = '\0';
+        log_name = p + 1;
+        dir_name.assign(file_name, static_cast<size_t>(p - file_name + 1));
     }
 
-    m_today_year = my_tm.tm_year + 1900;
-    m_today_mon = my_tm.tm_mon + 1;
-    m_today = my_tm.tm_mday;
-    m_file_index = 0;
-    
-    const string log_full_name = build_log_file_path(my_tm, m_file_index);
-    m_fp = fopen(log_full_name.c_str(), "a");
-    if (m_fp == NULL)
     {
-        shutdown_async();
-        if (m_log_queue != NULL)
+        lock_guard<mutex> queue_lock(m_queue_mutex);
+        reset_queue_locked();
+        m_max_queue_size = max_queue_size >= 1 ? static_cast<size_t>(max_queue_size) : 0;
+    }
+
+    {
+        lock_guard<mutex> file_lock(m_file_mutex);
+        m_count = 0;
+        m_today_year = my_tm.tm_year + 1900;
+        m_today_mon = my_tm.tm_mon + 1;
+        m_today = my_tm.tm_mday;
+        m_file_index = 0;
+
+        const string log_full_name = build_log_file_path(my_tm, m_file_index);
+        m_fp.reset(fopen(log_full_name.c_str(), "a"));
+        if (m_fp == nullptr)
         {
-            delete m_log_queue;
-            m_log_queue = NULL;
+            return false;
         }
-        return false;
+    }
+
+    if (max_queue_size >= 1)
+    {
+        try
+        {
+            m_is_async = true;
+            m_write_thread = thread(&Log::worker_loop, this);
+        }
+        catch (const system_error &)
+        {
+            m_is_async = false;
+            lock_guard<mutex> file_lock(m_file_mutex);
+            m_fp.reset();
+            return false;
+        }
+    }
+    else
+    {
+        m_is_async = false;
     }
 
     return true;
@@ -153,7 +155,7 @@ const char *Log::level_name(int level) const
     case ERROR:
         return "[error]:";
     default:
-    return "[info]:";
+        return "[info]:";
     }
 }
 
@@ -164,13 +166,6 @@ string Log::build_log_file_path(const tm &time_info, int file_index) const
 
 void Log::rotate_file(const tm &my_tm)
 {
-    if (m_fp != NULL)
-    {
-        fflush(m_fp);
-        fclose(m_fp);
-        m_fp = NULL;
-    }
-
     bool date_changed = (m_today_year != my_tm.tm_year + 1900) ||
                         (m_today_mon != my_tm.tm_mon + 1) ||
                         (m_today != my_tm.tm_mday);
@@ -189,12 +184,12 @@ void Log::rotate_file(const tm &my_tm)
     }
 
     tm current_time = my_tm;
-    m_fp = fopen(build_log_file_path(current_time, m_file_index).c_str(), "a");
+    m_fp.reset(fopen(build_log_file_path(current_time, m_file_index).c_str(), "a"));
 }
 
 void Log::write_to_file_locked(const char *data, size_t len, const tm &time_info)
 {
-    if (data == NULL || len == 0 || m_fp == NULL)
+    if (data == NULL || len == 0 || m_fp == nullptr)
     {
         return;
     }
@@ -209,9 +204,9 @@ void Log::write_to_file_locked(const char *data, size_t len, const tm &time_info
         rotate_file(time_info);
     }
 
-    if (m_fp != NULL)
+    if (m_fp != nullptr)
     {
-        fwrite(data, 1, len, m_fp);
+        fwrite(data, 1, len, m_fp.get());
     }
 }
 
@@ -262,80 +257,112 @@ void Log::write_log(int level, const char *format, ...)
     buffer[log_len++] = '\n';
     buffer[log_len] = '\0';
 
-    if (m_is_async && m_log_queue != NULL)
+    if (m_is_async)
     {
-        QueuedLog queued_log;
-        queued_log.data.assign(buffer, log_len);
-        queued_log.time_info = my_tm;
-        m_pending_logs.fetch_add(1, std::memory_order_release);
-        if (m_log_queue->push(std::move(queued_log)))
+        unique_lock<mutex> queue_lock(m_queue_mutex);
+        if (!m_stop_requested && m_max_queue_size > 0 && m_log_queue.size() < m_max_queue_size)
         {
+            QueuedLog queued_log;
+            queued_log.data.assign(buffer, log_len);
+            queued_log.time_info = my_tm;
+            m_log_queue.push_back(std::move(queued_log));
+            ++m_pending_logs;
+            queue_lock.unlock();
+            m_queue_cv.notify_one();
             return;
         }
-        m_pending_logs.fetch_sub(1, std::memory_order_release);
     }
 
-    m_mutex.lock();
+    lock_guard<mutex> file_lock(m_file_mutex);
     write_to_file_locked(buffer, log_len, my_tm);
-    m_mutex.unlock();
 }
 
 void Log::flush(void)
 {
-    if (m_is_async && m_log_queue != NULL)
+    if (m_is_async)
     {
-        while (m_pending_logs.load(std::memory_order_acquire) > 0)
-        {
-            usleep(1000);
-        }
+        unique_lock<mutex> queue_lock(m_queue_mutex);
+        m_drained_cv.wait(queue_lock, [this] {
+            return m_pending_logs == 0;
+        });
     }
-    m_mutex.lock();
-    //强制刷新写入流缓冲区
-    if (m_fp != NULL)
+
+    lock_guard<mutex> file_lock(m_file_mutex);
+    if (m_fp != nullptr)
     {
-        fflush(m_fp);
+        fflush(m_fp.get());
     }
-    m_mutex.unlock();
 }
 
-void *Log::async_write_log()
+void Log::worker_loop()
 {
     const size_t max_batch_size = 64;
     vector<QueuedLog> batch;
     batch.reserve(max_batch_size);
-    QueuedLog single_log;
-    //从阻塞队列中取出日志，直到队列关闭并被消费完
-    while (m_log_queue != NULL && m_log_queue->pop(single_log))
+
+    while (true)
     {
         batch.clear();
-        batch.push_back(std::move(single_log));
-        while (batch.size() < max_batch_size && m_log_queue->try_pop(single_log))
         {
-            batch.push_back(std::move(single_log));
+            unique_lock<mutex> queue_lock(m_queue_mutex);
+            m_queue_cv.wait(queue_lock, [this] {
+                return m_stop_requested || !m_log_queue.empty();
+            });
+
+            if (m_log_queue.empty() && m_stop_requested)
+            {
+                break;
+            }
+
+            const size_t batch_size = min(max_batch_size, m_log_queue.size());
+            for (size_t i = 0; i < batch_size; ++i)
+            {
+                batch.push_back(std::move(m_log_queue.front()));
+                m_log_queue.pop_front();
+            }
         }
 
-        m_mutex.lock();
-        for (size_t i = 0; i < batch.size(); ++i)
         {
-            write_to_file_locked(batch[i].data.data(), batch[i].data.size(), batch[i].time_info);
-            m_pending_logs.fetch_sub(1, std::memory_order_release);
+            lock_guard<mutex> file_lock(m_file_mutex);
+            for (size_t i = 0; i < batch.size(); ++i)
+            {
+                write_to_file_locked(batch[i].data.data(), batch[i].data.size(), batch[i].time_info);
+            }
         }
-        m_mutex.unlock();
+
+        {
+            lock_guard<mutex> queue_lock(m_queue_mutex);
+            m_pending_logs -= batch.size();
+            if (m_pending_logs == 0)
+            {
+                m_drained_cv.notify_all();
+            }
+        }
     }
-    return NULL;
+
+    lock_guard<mutex> queue_lock(m_queue_mutex);
+    if (m_pending_logs == 0)
+    {
+        m_drained_cv.notify_all();
+    }
 }
 
 void Log::shutdown_async()
 {
-    if (m_log_queue != NULL)
     {
-        m_log_queue->close();
+        lock_guard<mutex> queue_lock(m_queue_mutex);
+        m_stop_requested = true;
     }
-    if (m_thread_started)
+    m_queue_cv.notify_all();
+
+    if (m_write_thread.joinable())
     {
-        pthread_join(m_write_thread, NULL);
-        m_thread_started = false;
-        m_write_thread = 0;
+        m_write_thread.join();
+    }
+
+    {
+        lock_guard<mutex> queue_lock(m_queue_mutex);
+        reset_queue_locked();
     }
     m_is_async = false;
 }

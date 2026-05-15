@@ -40,29 +40,25 @@ if(NOT MYSQLCLIENT_FOUND)
     set(MYSQLCLIENT_LIBRARIES "${MYSQLCLIENT_LIBRARY}")
 endif()
 
-set(ATLAS_WITH_REDIS_LIMITER 0)
 set(ATLAS_RATE_LIMITER_SOURCES
     service/rate_limit/auth_rate_limiter.cpp
 )
 set(ATLAS_RATE_LIMITER_INCLUDE_DIRS "")
 set(ATLAS_RATE_LIMITER_LIBRARIES "")
+set(ATLAS_WITH_REDIS_LIMITER 0)
 
 find_path(HIREDIS_INCLUDE_DIR hiredis/hiredis.h)
 find_library(HIREDIS_LIBRARY hiredis)
 
-if(HIREDIS_INCLUDE_DIR AND HIREDIS_LIBRARY)
-    if(EXISTS "${ATLAS_REDIS_LIMITER_ROOT}/CMakeLists.txt")
-        set(REDIS_LIMITER_BUILD_PYTHON OFF CACHE BOOL "Build the redis_limiter Python extension" FORCE)
-        add_subdirectory("${ATLAS_REDIS_LIMITER_ROOT}" "${CMAKE_BINARY_DIR}/redis_limiter")
-        set(ATLAS_WITH_REDIS_LIMITER 1)
-        list(APPEND ATLAS_RATE_LIMITER_LIBRARIES
-            redis_limiter::core
-        )
-    else()
-        message(WARNING "external Redis-Limiter project not found at ${ATLAS_REDIS_LIMITER_ROOT}; auth rate limiter will use local fallback only")
-    endif()
+if(HIREDIS_INCLUDE_DIR AND HIREDIS_LIBRARY AND EXISTS "${ATLAS_REDIS_LIMITER_ROOT}/CMakeLists.txt")
+    set(REDIS_LIMITER_BUILD_PYTHON OFF CACHE BOOL "Build the redis_limiter Python extension" FORCE)
+    add_subdirectory("${ATLAS_REDIS_LIMITER_ROOT}" "${CMAKE_BINARY_DIR}/redis_limiter")
+    set(ATLAS_WITH_REDIS_LIMITER 1)
+    list(APPEND ATLAS_RATE_LIMITER_LIBRARIES
+        redis_limiter::core
+    )
 else()
-    message(WARNING "hiredis not found; auth rate limiter will use local fallback only")
+    message(WARNING "Redis-Limiter or hiredis not found; Atlas auth rate limiting will be disabled")
 endif()
 
 set(ATLAS_SERVER_SOURCES
@@ -174,6 +170,13 @@ add_executable(share-service-test
 target_include_directories(share-service-test PRIVATE ${MYSQLCLIENT_INCLUDE_DIRS})
 target_link_libraries(share-service-test PRIVATE OpenSSL::Crypto ${MYSQLCLIENT_LIBRARIES})
 
+add_executable(auth-rate-limiter-test
+    tests/auth_rate_limiter_test.cpp
+    service/rate_limit/auth_rate_limiter.cpp
+)
+target_compile_definitions(auth-rate-limiter-test PRIVATE ATLAS_WITH_REDIS_LIMITER=${ATLAS_WITH_REDIS_LIMITER})
+target_link_libraries(auth-rate-limiter-test PRIVATE Threads::Threads ${ATLAS_RATE_LIMITER_LIBRARIES})
+
 add_custom_target(atlas-unit-tests
     DEPENDS
         parser-chunked-test
@@ -184,6 +187,7 @@ add_custom_target(atlas-unit-tests
         upload-service-test
         file-service-test
         share-service-test
+        auth-rate-limiter-test
 )
 
 if(ATLAS_ENABLE_SANITIZERS)
@@ -205,6 +209,8 @@ if(ATLAS_ENABLE_SANITIZERS)
     target_link_options(file-service-test PRIVATE -fsanitize=address,undefined)
     target_compile_options(share-service-test PRIVATE -O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined)
     target_link_options(share-service-test PRIVATE -fsanitize=address,undefined)
+    target_compile_options(auth-rate-limiter-test PRIVATE -O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined)
+    target_link_options(auth-rate-limiter-test PRIVATE -fsanitize=address,undefined)
 endif()
 
 if(ATLAS_ENABLE_COVERAGE)
@@ -224,6 +230,8 @@ if(ATLAS_ENABLE_COVERAGE)
     target_link_options(file-service-test PRIVATE --coverage)
     target_compile_options(share-service-test PRIVATE -O0 -g --coverage)
     target_link_options(share-service-test PRIVATE --coverage)
+    target_compile_options(auth-rate-limiter-test PRIVATE -O0 -g --coverage)
+    target_link_options(auth-rate-limiter-test PRIVATE --coverage)
 endif()
 
 enable_testing()
@@ -235,3 +243,4 @@ add_test(NAME multipart_parser COMMAND multipart-parser-test)
 add_test(NAME upload_service COMMAND upload-service-test)
 add_test(NAME file_service COMMAND file-service-test)
 add_test(NAME share_service COMMAND share-service-test)
+add_test(NAME auth_rate_limiter COMMAND auth-rate-limiter-test)

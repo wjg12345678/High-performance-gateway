@@ -22,5 +22,5 @@ local body = table.concat({
 wrk.method = "POST"
 wrk.headers["Authorization"] = "Bearer " .. token
 wrk.headers["Content-Type"] = "multipart/form-data; boundary=" .. boundary
-wrk.headers["Connection"] = "keep-alive"
+wrk.headers["Connection"] = "close"
 wrk.body = body

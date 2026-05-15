@@ -28,11 +28,11 @@ size_t HttpConnection::m_upload_request_overhead_bytes = 128;
 Log::Log() {}
 Log::~Log() {}
 bool Log::init(const char *, int, int, int, int, int) { return true; }
-void *Log::async_write_log() { return nullptr; }
 void Log::shutdown_async() {}
 const char *Log::level_name(int) const { return "INFO"; }
 void Log::rotate_file(const tm &) {}
 std::string Log::build_log_file_path(const tm &, int) const { return ""; }
+void Log::reset_queue_locked() {}
 void Log::write_log(int, const char *, ...) {}
 void Log::flush() {}
 

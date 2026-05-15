@@ -1,14 +1,5 @@
 #include "auth_rate_limiter.h"
 
-#include <algorithm>
-#include <chrono>
-#include <cmath>
-#include <cctype>
-#include <cstdio>
-#include <map>
-#include <memory>
-#include <mutex>
-
 #ifndef ATLAS_WITH_REDIS_LIMITER
 #define ATLAS_WITH_REDIS_LIMITER 0
 #endif
@@ -16,6 +7,12 @@
 #if ATLAS_WITH_REDIS_LIMITER
 #include "sliding_window_limiter.hpp"
 #endif
+
+#include <algorithm>
+#include <cctype>
+#include <cstdio>
+#include <memory>
+#include <mutex>
 
 namespace
 {
@@ -90,70 +87,6 @@ std::string key_component(const std::string &value)
     return encoded;
 }
 
-class LocalTokenBucketLimiter
-{
-public:
-    LocalTokenBucketLimiter() : m_max_tokens(1), m_refill_rate(1.0) {}
-
-    explicit LocalTokenBucketLimiter(const AuthBucketSettings &settings)
-        : m_max_tokens(std::max(1, settings.max_tokens)),
-          m_refill_rate(settings.refill_rate > 0.0 ? settings.refill_rate : 1.0)
-    {
-    }
-
-    AuthRateLimitDecision allow(const std::string &key, const std::string &scope)
-    {
-        using Clock = std::chrono::steady_clock;
-        const Clock::time_point now = Clock::now();
-
-        std::lock_guard<std::mutex> lock(m_mutex);
-        BucketState &bucket = m_buckets[key];
-        if (bucket.last_refill.time_since_epoch().count() == 0)
-        {
-            bucket.tokens = static_cast<double>(m_max_tokens);
-            bucket.last_refill = now;
-        }
-
-        const double elapsed_seconds = std::chrono::duration<double>(now - bucket.last_refill).count();
-        if (elapsed_seconds > 0.0)
-        {
-            bucket.tokens = std::min<double>(m_max_tokens, bucket.tokens + elapsed_seconds * m_refill_rate);
-            bucket.last_refill = now;
-        }
-
-        AuthRateLimitDecision decision;
-        decision.scope = scope;
-        decision.backend = "local";
-        decision.allowed = bucket.tokens >= 1.0;
-        if (decision.allowed)
-        {
-            bucket.tokens -= 1.0;
-            decision.retry_after_ms = 0;
-            return decision;
-        }
-
-        const double missing = std::max(0.0, 1.0 - bucket.tokens);
-        decision.retry_after_ms = static_cast<int>(std::ceil((missing / m_refill_rate) * 1000.0));
-        if (decision.retry_after_ms <= 0)
-        {
-            decision.retry_after_ms = 1000;
-        }
-        return decision;
-    }
-
-private:
-    struct BucketState
-    {
-        double tokens = 0.0;
-        std::chrono::steady_clock::time_point last_refill{};
-    };
-
-    int m_max_tokens;
-    double m_refill_rate;
-    std::map<std::string, BucketState> m_buckets;
-    std::mutex m_mutex;
-};
-
 class AuthRateLimiter
 {
 public:
@@ -161,10 +94,7 @@ public:
         : m_enabled(settings.enabled),
           m_login_ip_settings(normalize_bucket(settings.login_ip, kDefaultLoginIpMaxTokens, kDefaultLoginIpRefillRate)),
           m_login_user_settings(normalize_bucket(settings.login_user, kDefaultLoginUserMaxTokens, kDefaultLoginUserRefillRate)),
-          m_register_ip_settings(normalize_bucket(settings.register_ip, kDefaultRegisterIpMaxTokens, kDefaultRegisterIpRefillRate)),
-          m_login_ip_local(m_login_ip_settings),
-          m_login_user_local(m_login_user_settings),
-          m_register_ip_local(m_register_ip_settings)
+          m_register_ip_settings(normalize_bucket(settings.register_ip, kDefaultRegisterIpMaxTokens, kDefaultRegisterIpRefillRate))
     {
         if (!m_enabled)
         {
@@ -270,8 +200,10 @@ private:
         {
             return from_remote_result(m_login_ip_remote->allow(key), "login_ip");
         }
+#else
+        (void)key;
 #endif
-        return m_login_ip_local.allow(key, "login_ip");
+        return AuthRateLimitDecision();
     }
 
     AuthRateLimitDecision allow_login_user(const std::string &key)
@@ -281,8 +213,10 @@ private:
         {
             return from_remote_result(m_login_user_remote->allow(key), "login_user");
         }
+#else
+        (void)key;
 #endif
-        return m_login_user_local.allow(key, "login_user");
+        return AuthRateLimitDecision();
     }
 
     AuthRateLimitDecision allow_register_ip(const std::string &key)
@@ -292,18 +226,16 @@ private:
         {
             return from_remote_result(m_register_ip_remote->allow(key), "register_ip");
         }
+#else
+        (void)key;
 #endif
-        return m_register_ip_local.allow(key, "register_ip");
+        return AuthRateLimitDecision();
     }
 
     bool m_enabled;
     AuthBucketSettings m_login_ip_settings;
     AuthBucketSettings m_login_user_settings;
     AuthBucketSettings m_register_ip_settings;
-    LocalTokenBucketLimiter m_login_ip_local;
-    LocalTokenBucketLimiter m_login_user_local;
-    LocalTokenBucketLimiter m_register_ip_local;
-
 #if ATLAS_WITH_REDIS_LIMITER
     std::shared_ptr<rrl::RedisPool> m_redis_pool;
     std::shared_ptr<rrl::ResilientTokenBucketLimiter> m_login_ip_remote;

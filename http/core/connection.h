@@ -178,6 +178,7 @@ private:
     bool append_streamed_body_chunk(const char *data, size_t len);
     void reset_streamed_body_buffer();
     void cleanup_temp_upload_state();
+    void release_connection_memory();
 
     // Response writing.
     char *get_line() { return m_read_buf.empty() ? nullptr : m_read_buf.data() + m_start_line; };
